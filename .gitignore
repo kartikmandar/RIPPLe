@@ -62,11 +62,6 @@ benchmark_results/
 *.log
 logs/
 
-# Configuration files (sensitive)
-config.yaml
-config_*.yaml
-*.yml
-
 
 # Keep config_demo.yaml as example
 !config_demo.yaml
@@ -87,9 +82,6 @@ docs/generated/
 secrets.json
 secrets.yaml
 secrets.yml
-
-# AI DOCS
-AI_DOCS/
 
 # env files
 .envrc
