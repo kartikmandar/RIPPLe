@@ -1,0 +1,127 @@
+# LSST data folders
+
+data/pipelines_check-29.1.1/
+data/testdata_decam/
+data/rc2_subset/
+data/lsstdesc-public/
+data/ 
+
+# Other data directories
+lsst_stack/
+lsst_stack2/
+lsst_stack3/
+
+# Example data
+demo_data/
+test_data/
+
+# Outputs and build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+env/
+venv/
+.ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Testing artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Performance data
+profiler_output/
+benchmark_results/
+
+# Logs
+*.log
+logs/
+
+# Configuration files (sensitive)
+config.yaml
+config_*.yaml
+*.yml
+
+
+# Keep config_demo.yaml as example
+!config_demo.yaml
+
+# Jupyter notebook outputs
+.ipynb_checkpoints/
+
+# Documentation builds
+docs/_build/
+
+# Sphinx documentation
+docs/generated/
+
+# Caches
+.cache/
+
+# Secret files
+secrets.json
+secrets.yaml
+secrets.yml
+
+# AI DOCS
+AI_DOCS/
+
+# env files
+.envrc
+.env.local
+.env.*.local
+.env.*.bak
+.env.*.save
+
+# Non documentation markdown files
+GAMEPLAN.md
+PHASE_*.md
+ROADMAP.md
+TODO.md
+
+# Temporary files
+*.tmp
+*.temp
+
+# Git-related files
+.git/merge_diff/
+.git/rewrite/
+*~.rej
+*.orig
+
+# Virtual environments and dependencies
+venv.bak/
+venv.save/
+
+# Local development backups
+*.bak
+*.backup
+
+# Config yaml files
+*.yaml
+
