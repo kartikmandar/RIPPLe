@@ -1,0 +1,3 @@
+[submodule "DeepLense"]
+	path = DeepLense
+	url = https://github.com/kartikmandar/DeepLense.git
