@@ -77,9 +77,12 @@ class RipplePipeline:
             if not self._setup_repository():
                 return 1
             
-            # For config-based runs, we only setup the butler repository
+            # Step 4: Run pipeline operations
+            if not self._run_pipeline():
+                return 1
+            
             logger.info("\n" + "=" * 60)
-            logger.info("Butler repository setup completed successfully!")
+            logger.info("RIPPLe pipeline execution completed successfully!")
             logger.info(f"Repository location: {self.repo_path}")
             logger.info("=" * 60)
             
@@ -196,43 +199,32 @@ class RipplePipeline:
             return False
     
     def _run_pipeline(self) -> bool:
-        """Run the main pipeline operations."""
+        """Run the main pipeline operations using PipelineBuilder and PipelineExecutor."""
         logger.info("\nStep 5: Running pipeline operations...")
         
-        # This is where you would add actual pipeline operations
-        # For now, we'll just demonstrate data access
-        
-        if self.data_fetcher:
-            try:
-                # Example: Query available data
-                logger.info("\nQuerying available data...")
-                
-                # You can add specific coordinates from config or use defaults
-                test_ra = 320.37  # Example coordinate
-                test_dec = -0.33
-                
-                availability = self.data_fetcher.get_available_data(
-                    ra=test_ra,
-                    dec=test_dec
-                )
-                
-                logger.info(f"Available data at (RA={test_ra}, Dec={test_dec}):")
-                logger.info(f"  Filters: {availability.get('filters', [])}")
-                logger.info(f"  Tract/Patch: {availability.get('tracts_patches', [])}")
-                
-                # Example: Fetch a cutout if requested in config
-                if hasattr(self.config.processing, 'test_cutout') and self.config.processing.test_cutout:
-                    logger.info("\nFetching test cutout...")
-                    cutout = self.data_fetcher.fetch_cutout(
-                        ra=test_ra,
-                        dec=test_dec,
-                        size=self.config.processing.cutout_size,
-                        filters=['r']
-                    )
-                    logger.info(f"✓ Successfully fetched cutout: {cutout.getImage().array.shape}")
-                
-            except Exception as e:
-                logger.warning(f"Pipeline operation warning: {e}")
+        try:
+            # Import the new pipeline components
+            from ripple.pipeline.pipeline_builder import PipelineBuilder
+            from ripple.pipeline.pipeline_executor import PipelineExecutor
+            
+            # 1. Build the pipeline using the loaded configuration
+            logger.info("Building pipeline from configuration...")
+            pipeline_builder = PipelineBuilder(config=self.config)
+            pipeline = pipeline_builder.build_pipeline()
+            logger.info(f"✓ Pipeline '{pipeline.name}' built successfully with {len(pipeline.stages)} stages.")
+            
+            # 2. Execute the pipeline
+            logger.info("Executing pipeline...")
+            pipeline_executor = PipelineExecutor(pipeline=pipeline)
+            pipeline_executor.execute()
+            logger.info("✓ Pipeline execution initiated.")
+            
+        except ImportError as e:
+            logger.error(f"Failed to import pipeline components: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"An error occurred during pipeline operations: {e}", exc_info=True)
+            return False
         
         logger.info("\n✓ Pipeline operations completed")
         return True
@@ -246,13 +238,13 @@ def main():
         epilog="""
 Examples:
   # Run pipeline with configuration file
-  python -m ripple.main config.yaml
+  python -m ripple.main --config-file config.yaml
   
   # Generate default configuration
   python -m ripple.main --generate-config my_config.yaml
   
   # Run with verbose output
-  python -m ripple.main config.yaml --verbose
+  python -m ripple.main --config-file config.yaml --verbose
   
   # Show version information
   python -m ripple.main --version
@@ -260,9 +252,10 @@ Examples:
     )
     
     parser.add_argument(
-        "config",
-        nargs="?",
-        help="Configuration YAML file"
+        "--config-file",
+        metavar="FILE",
+        required=True,
+        help="Path to the configuration YAML file"
     )
     
     parser.add_argument(
@@ -323,12 +316,8 @@ Examples:
         print("  3. Configure processing parameters")
         return 0
     
-    # Check if config file is provided
-    if not args.config:
-        parser.error("Configuration file is required. Use --generate-config to create one.")
-    
     # Run pipeline
-    pipeline = RipplePipeline(args.config)
+    pipeline = RipplePipeline(args.config_file)
     return pipeline.run()
 
 

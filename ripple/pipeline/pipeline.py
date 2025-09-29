@@ -1,7 +1,14 @@
+from dataclasses import dataclass, field
+from typing import List, Any
+
+from .pipeline_stage import PipelineStage
+
+@dataclass
 class Pipeline:
     """
-    A placeholder for the Pipeline.
-    This class will be implemented in a later phase.
+    Represents a data processing pipeline.
+    A pipeline consists of a name and a sequence of stages to be executed.
     """
-    def __init__(self, config=None):
-        self.config = config
+    name: str
+    stages: List[PipelineStage] = field(default_factory=list)
+    config: Any = None
