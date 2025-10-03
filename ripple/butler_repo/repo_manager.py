@@ -75,7 +75,7 @@ class ButlerRepoManager:
                     logger.warning(f"Repository verification warnings: {verification['errors']}")
             
             # Initialize data fetcher if repository is ready
-            if self.config.data_source.type in ['butler_repo', 'data_folder']:
+            if self.config.data_source.get('type') in ['butler_repo', 'data_folder']:
                 self._initialize_data_fetcher()
             
             return True, str(repo_path)
@@ -93,21 +93,24 @@ class ButlerRepoManager:
         Tuple[Path, bool]
             Repository path and whether creation is needed
         """
-        if self.config.data_source.type == 'butler_repo':
+        ds_config = self.config.data_source
+        ds_type = ds_config.get('type')
+        
+        if ds_type == 'butler_repo':
             # Use existing repository
-            repo_path = Path(self.config.data_source.path)
+            repo_path = Path(ds_config.get('path'))
             needs_creation = False
             
             # Check if it exists
             if not (repo_path / "butler.yaml").exists():
-                if self.config.data_source.create_if_missing:
+                if ds_config.get('create_if_missing', True):
                     needs_creation = True
                 else:
                     raise ValueError(f"Butler repository not found at {repo_path}")
                     
-        elif self.config.data_source.type == 'data_folder':
+        elif ds_type == 'data_folder':
             # Create repository for data folder
-            data_path = Path(self.config.data_source.path)
+            data_path = Path(ds_config.get('path'))
             if not data_path.exists():
                 raise ValueError(f"Data folder not found: {data_path}")
             
@@ -120,11 +123,11 @@ class ButlerRepoManager:
             else:
                 needs_creation = True
             
-        elif self.config.data_source.type == 'butler_server':
+        elif ds_type == 'butler_server':
             # Remote butler server - no local repository needed
             return None, False
         else:
-            raise ValueError(f"Unknown data source type: {self.config.data_source.type}")
+            raise ValueError(f"Unknown data source type: {ds_type}")
         
         return repo_path, needs_creation
     
@@ -180,8 +183,9 @@ class ButlerRepoManager:
             return False
         
         # Check for export file in data folder
-        if self.config.data_source.type == 'data_folder':
-            data_path = Path(self.config.data_source.path)
+        ds_config = self.config.data_source
+        if ds_config.get('type') == 'data_folder':
+            data_path = Path(ds_config.get('path'))
             export_file = None
             
             # Look for export.yaml
@@ -237,23 +241,24 @@ class ButlerRepoManager:
         logger.info("Starting manual data ingestion...")
         
         # Update config to point to data location
-        if self.config.data_source.type == 'data_folder':
+        ds_config = self.config.data_source
+        if ds_config.get('type') == 'data_folder':
             # Set ingestion paths based on data folder structure
-            data_path = Path(self.config.data_source.path)
+            data_path = Path(ds_config.get('path'))
             
             # Look for common data structures
             if (data_path / "raw").exists():
-                self.config.ingestion.raw_data_pattern = "raw/**/*.fits"
+                self.config.ingestion['raw_data_pattern'] = "raw/**/*.fits"
             elif (data_path / "HSC" / "raw").exists():
-                self.config.ingestion.raw_data_pattern = "HSC/raw/**/*.fits"
+                self.config.ingestion['raw_data_pattern'] = "HSC/raw/**/*.fits"
             
             if (data_path / "calib").exists():
-                self.config.ingestion.calibration_path = str(data_path / "calib")
+                self.config.ingestion['calibration_path'] = str(data_path / "calib")
             elif (data_path / "HSC" / "calib").exists():
-                self.config.ingestion.calibration_path = str(data_path / "HSC" / "calib")
+                self.config.ingestion['calibration_path'] = str(data_path / "HSC" / "calib")
             
             if (data_path / "refcats").exists():
-                self.config.ingestion.reference_catalog_path = str(data_path / "refcats")
+                self.config.ingestion['reference_catalog_path'] = str(data_path / "refcats")
         
         # Run ingestion
         ingestor = DataIngestor(str(repo_path), self.config)
@@ -283,15 +288,15 @@ class ButlerRepoManager:
             # Create data access configuration
             da_config = DataAccessButlerConfig(
                 repo_path=str(self.repo_path),
-                collections=self.config.data_source.collections or [
+                collections=self.config.data_source.get('params', {}).get('collections') or [
                     f"{self.config.instrument.name}/defaults",
                     f"{self.config.instrument.name}/raw/all",
                     f"{self.config.instrument.name}/calib",
                     "refcats"
                 ],
                 instrument=self.config.instrument.name,
-                cache_size=self.config.processing.cache_size,
-                enable_performance_monitoring=self.config.processing.enable_performance_monitoring,
+                cache_size=self.config.processing.get('cache_size', 1000),
+                enable_performance_monitoring=self.config.processing.get('enable_performance_monitoring', True),
                 timeout=30.0,
                 retry_attempts=3
             )

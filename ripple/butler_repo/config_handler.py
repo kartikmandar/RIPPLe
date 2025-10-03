@@ -72,31 +72,36 @@ class ProcessingConfig:
 @dataclass
 class RepoConfig:
     """Complete repository configuration."""
-    data_source: DataSourceConfig
+    # Core configurations that have a fixed structure
     instrument: InstrumentConfig
-    ingestion: IngestionConfig
     butler: ButlerConfig
-    processing: ProcessingConfig
+    
+    # Pipeline stage configurations, kept as flexible dictionaries
+    data_source: Dict[str, Any]
+    ingestion: Dict[str, Any]
+    processing: Dict[str, Any]
+    model: Dict[str, Any] # Added for the model stage
     
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'RepoConfig':
         """Create RepoConfig from dictionary."""
         # Get instrument config and validate required fields
-        instrument_config = config_dict.get('instrument', {})
-        if 'name' not in instrument_config or 'class_name' not in instrument_config:
+        instrument_config_dict = config_dict.get('instrument', {})
+        if 'name' not in instrument_config_dict or 'class_name' not in instrument_config_dict:
             missing_fields = []
-            if 'name' not in instrument_config:
+            if 'name' not in instrument_config_dict:
                 missing_fields.append('name')
-            if 'class_name' not in instrument_config:
+            if 'class_name' not in instrument_config_dict:
                 missing_fields.append('class_name')
             raise ValueError(f"Missing required instrument configuration fields: {', '.join(missing_fields)}")
         
         return cls(
-            data_source=DataSourceConfig(**config_dict.get('data_source', {})),
-            instrument=InstrumentConfig(**instrument_config),
-            ingestion=IngestionConfig(**config_dict.get('ingestion', {})),
+            instrument=InstrumentConfig(**instrument_config_dict),
             butler=ButlerConfig(**config_dict.get('butler', {})),
-            processing=ProcessingConfig(**config_dict.get('processing', {}))
+            data_source=config_dict.get('data_source', {}),
+            ingestion=config_dict.get('ingestion', {}),
+            processing=config_dict.get('processing', {}),
+            model=config_dict.get('model', {})
         )
 
 
@@ -161,29 +166,12 @@ def validate_config(config: RepoConfig) -> None:
     ValueError
         If configuration is invalid
     """
-    # Validate data source
-    if config.data_source.type not in ['butler_repo', 'butler_server', 'data_folder']:
-        raise ValueError(f"Invalid data source type: {config.data_source.type}")
-    
-    if config.data_source.type == 'butler_repo' and not config.data_source.path:
-        raise ValueError("Butler repository path required for type 'butler_repo'")
-    
-    if config.data_source.type == 'butler_server' and not config.data_source.server_url:
-        raise ValueError("Server URL required for type 'butler_server'")
-    
-    if config.data_source.type == 'data_folder' and not config.data_source.path:
-        raise ValueError("Data folder path required for type 'data_folder'")
-    
     # Validate instrument
     if not config.instrument.name:
         raise ValueError("Instrument name is required")
     
     if not config.instrument.class_name:
         raise ValueError("Instrument class name is required")
-    
-    # Validate ingestion
-    if config.ingestion.transfer_mode not in ['symlink', 'copy', 'move', 'direct', 'hardlink']:
-        raise ValueError(f"Invalid transfer mode: {config.ingestion.transfer_mode}")
     
     # Validate butler config
     if config.butler.registry_db not in ['sqlite', 'postgresql']:
@@ -192,14 +180,11 @@ def validate_config(config: RepoConfig) -> None:
     if config.butler.registry_db == 'postgresql' and not config.butler.postgres_url:
         raise ValueError("PostgreSQL URL required when using PostgreSQL registry")
     
-    # Validate paths exist if specified
-    if config.data_source.path:
-        path = Path(config.data_source.path)
-        if config.data_source.type == 'butler_repo' and not config.data_source.create_if_missing:
-            if not path.exists():
-                raise ValueError(f"Butler repository path does not exist: {path}")
+    # Note: Pipeline stage configurations (data_source, ingestion, processing, model)
+    # are now flexible dictionaries and are not validated here.
+    # Individual stages are responsible for validating their own configurations.
     
-    logger.info("Configuration validated successfully")
+    logger.info("Core configuration validated successfully")
 
 
 def _expand_env_vars(config_dict: Dict[str, Any]) -> Dict[str, Any]:

@@ -24,13 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from ripple.butler_repo import ButlerRepoManager, load_config, get_default_config, save_config
 from ripple.butler_repo.utils import check_lsst_environment, validate_butler_command
 from ripple.data_access import LsstDataFetcher, ButlerConfig
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from ripple.utils.logger import Logger
 
 
 class RipplePipeline:
@@ -60,9 +54,9 @@ class RipplePipeline:
         int
             Exit code (0 for success, non-zero for failure)
         """
-        logger.info("=" * 60)
-        logger.info("RIPPLe Pipeline - Rubin Image Preparation and Processing")
-        logger.info("=" * 60)
+        Logger.header("=" * 60)
+        Logger.header("RIPPLe Pipeline - Rubin Image Preparation and Processing")
+        Logger.header("=" * 60)
         
         try:
             # Step 1: Check environment
@@ -81,84 +75,84 @@ class RipplePipeline:
             if not self._run_pipeline():
                 return 1
             
-            logger.info("\n" + "=" * 60)
-            logger.info("RIPPLe pipeline execution completed successfully!")
-            logger.info(f"Repository location: {self.repo_path}")
-            logger.info("=" * 60)
+            Logger.header("\n" + "=" * 60)
+            Logger.header("RIPPLe pipeline execution completed successfully!")
+            Logger.header(f"Repository location: {self.repo_path}")
+            Logger.header("=" * 60)
             
             return 0
             
         except KeyboardInterrupt:
-            logger.warning("\nPipeline interrupted by user")
+            Logger.warning("\nPipeline interrupted by user")
             return 130
         except Exception as e:
-            logger.error(f"Pipeline failed with error: {e}", exc_info=True)
+            Logger.error(f"Pipeline failed with error: {e}")
             return 1
     
     def _check_environment(self) -> bool:
         """Check if LSST environment is properly configured."""
-        logger.info("\nStep 1: Checking environment...")
+        Logger.step("Step 1", "Checking environment...")
         
         # Check LSST stack
         if not check_lsst_environment():
-            logger.error("\nLSST Science Pipelines not found!")
-            logger.error("Please activate the LSST environment:")
-            logger.error("  source /path/to/lsst_stack/loadLSST.sh")
-            logger.error("  setup lsst_distrib")
+            Logger.error("\nLSST Science Pipelines not found!")
+            Logger.error("Please activate the LSST environment:")
+            Logger.error("  source /path/to/lsst_stack/loadLSST.sh")
+            Logger.error("  setup lsst_distrib")
             return False
         
         # Check butler command
         if not validate_butler_command():
-            logger.error("Butler command not found. Please ensure LSST stack is properly set up.")
+            Logger.error("Butler command not found. Please ensure LSST stack is properly set up.")
             return False
         
-        logger.info("✓ Environment check passed")
+        Logger.success("✓ Environment check passed")
         return True
     
     def _load_configuration(self) -> bool:
         """Load and validate configuration."""
-        logger.info(f"\nStep 2: Loading configuration from {self.config_path}")
+        Logger.step("Step 2", f"Loading configuration from {self.config_path}")
         
         try:
             self.config = load_config(self.config_path)
-            logger.info("✓ Configuration loaded successfully")
+            Logger.success("✓ Configuration loaded successfully")
             
             # Log key configuration details
-            logger.info(f"  Data source: {self.config.data_source.type}")
-            logger.info(f"  Instrument: {self.config.instrument.name}")
+            Logger.info(f"  Data source: {self.config.data_source.get('type', 'N/A')}")
+            Logger.info(f"  Instrument: {self.config.instrument.name}")
             
             return True
             
         except FileNotFoundError:
-            logger.error(f"Configuration file not found: {self.config_path}")
-            logger.error("Use --generate-config to create a template configuration")
+            Logger.error(f"Configuration file not found: {self.config_path}")
+            Logger.error("Use --generate-config to create a template configuration")
             return False
         except Exception as e:
-            logger.error(f"Failed to load configuration: {e}")
+            Logger.error(f"Failed to load configuration: {e}")
             return False
     
     def _setup_repository(self) -> bool:
         """Set up Butler repository based on configuration."""
-        logger.info("\nStep 3: Setting up Butler repository...")
+        Logger.step("Step 3", "Setting up Butler repository...")
         
         self.repo_manager = ButlerRepoManager(self.config)
         success, result = self.repo_manager.setup_repository()
         
         if success:
             self.repo_path = result
-            logger.info(f"✓ Repository ready at: {result}")
+            Logger.success(f"✓ Repository ready at: {result}")
             return True
         else:
-            logger.error(f"Failed to setup repository: {result}")
+            Logger.error(f"Failed to setup repository: {result}")
             return False
     
     def _initialize_data_access(self) -> bool:
         """Initialize data access layer."""
-        logger.info("\nStep 4: Initializing data access...")
+        Logger.step("Step 4", "Initializing data access...")
         
         # Skip for server-based repositories
-        if self.config.data_source.type == 'butler_server':
-            logger.info("Using remote Butler server - skipping local data access initialization")
+        if self.config.data_source.get('type') == 'butler_server':
+            Logger.info("Using remote Butler server - skipping local data access initialization")
             return True
         
         try:
@@ -166,41 +160,41 @@ class RipplePipeline:
             self.data_fetcher = self.repo_manager.get_data_fetcher()
             
             if self.data_fetcher:
-                logger.info("✓ Data access initialized from repository manager")
+                Logger.success("✓ Data access initialized from repository manager")
             else:
                 # Create new data fetcher
                 butler_config = ButlerConfig(
                     repo_path=str(self.repo_path),
-                    collections=self.config.data_source.collections or [
+                    collections=self.config.data_source.get('params', {}).get('collections') or [
                         f"{self.config.instrument.name}/defaults",
                         f"{self.config.instrument.name}/raw/all",
                         f"{self.config.instrument.name}/calib",
                         "refcats"
                     ],
                     instrument=self.config.instrument.name,
-                    cache_size=self.config.processing.cache_size,
-                    enable_performance_monitoring=self.config.processing.enable_performance_monitoring
+                    cache_size=self.config.processing.get('cache_size', 1000),
+                    enable_performance_monitoring=self.config.processing.get('enable_performance_monitoring', True)
                 )
                 
                 self.data_fetcher = LsstDataFetcher(butler_config)
-                logger.info("✓ Data access initialized")
+                Logger.success("✓ Data access initialized")
             
             # Test data access
             validation = self.data_fetcher.validate_configuration()
             if validation['butler_connection']:
-                logger.info("✓ Butler connection verified")
+                Logger.success("✓ Butler connection verified")
             else:
-                logger.warning("Butler connection validation failed")
+                Logger.warning("Butler connection validation failed")
             
             return True
             
         except Exception as e:
-            logger.error(f"Failed to initialize data access: {e}")
+            Logger.error(f"Failed to initialize data access: {e}")
             return False
     
     def _run_pipeline(self) -> bool:
         """Run the main pipeline operations using PipelineBuilder and PipelineExecutor."""
-        logger.info("\nStep 5: Running pipeline operations...")
+        Logger.step("Step 5", "Running pipeline operations...")
         
         try:
             # Import the new pipeline components
@@ -208,25 +202,25 @@ class RipplePipeline:
             from ripple.pipeline.pipeline_executor import PipelineExecutor
             
             # 1. Build the pipeline using the loaded configuration
-            logger.info("Building pipeline from configuration...")
+            Logger.info("Building pipeline from configuration...")
             pipeline_builder = PipelineBuilder(config=self.config)
             pipeline = pipeline_builder.build_pipeline()
-            logger.info(f"✓ Pipeline '{pipeline.name}' built successfully with {len(pipeline.stages)} stages.")
+            Logger.success(f"✓ Pipeline '{pipeline.name}' built successfully with {len(pipeline.stages)} stages.")
             
             # 2. Execute the pipeline
-            logger.info("Executing pipeline...")
+            Logger.info("Executing pipeline...")
             pipeline_executor = PipelineExecutor(pipeline=pipeline)
             pipeline_executor.execute()
-            logger.info("✓ Pipeline execution initiated.")
+            Logger.success("✓ Pipeline execution initiated.")
             
         except ImportError as e:
-            logger.error(f"Failed to import pipeline components: {e}")
+            Logger.error(f"Failed to import pipeline components: {e}")
             return False
         except Exception as e:
-            logger.error(f"An error occurred during pipeline operations: {e}", exc_info=True)
+            Logger.error(f"An error occurred during pipeline operations: {e}")
             return False
         
-        logger.info("\n✓ Pipeline operations completed")
+        Logger.success("\n✓ Pipeline operations completed")
         return True
 
 
@@ -290,30 +284,30 @@ Examples:
     
     # Show version
     if args.version:
-        print("RIPPLe (Rubin Image Preparation and Processing Lensing engine)")
-        print("Version: 0.1.0")
+        Logger.header("RIPPLe (Rubin Image Preparation and Processing Lensing engine)")
+        Logger.info("Version: 0.1.0")
         return 0
     
     # Check environment only
     if args.check_env:
         if check_lsst_environment() and validate_butler_command():
-            print("✓ Environment check passed")
-            print("  LSST Science Pipelines: Available")
-            print("  Butler command: Available")
+            Logger.success("✓ Environment check passed")
+            Logger.info("  LSST Science Pipelines: Available")
+            Logger.info("  Butler command: Available")
             return 0
         else:
-            print("✗ Environment check failed")
+            Logger.error("✗ Environment check failed")
             return 1
     
     # Generate configuration
     if args.generate_config:
         config = get_default_config()
         save_config(config, args.generate_config)
-        print(f"Generated configuration file: {args.generate_config}")
-        print("\nPlease edit the configuration file to:")
-        print("  1. Set the correct data source path")
-        print("  2. Choose the appropriate instrument")
-        print("  3. Configure processing parameters")
+        Logger.success(f"Generated configuration file: {args.generate_config}")
+        Logger.info("\nPlease edit the configuration file to:")
+        Logger.info("  1. Set the correct data source path")
+        Logger.info("  2. Choose the appropriate instrument")
+        Logger.info("  3. Configure processing parameters")
         return 0
     
     # Run pipeline

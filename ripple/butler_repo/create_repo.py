@@ -95,20 +95,22 @@ def initialize_repository(config: RepoConfig, repo_path: str) -> bool:
             register_cmd = ["butler", "register-instrument", str(repo_path_obj), config.instrument.class_name]
             logger.debug(f"Register command: {' '.join(register_cmd)}")
             
-            register_result = subprocess.run(
-                register_cmd,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            
-            if register_result.returncode != 0:
-                logger.error(f"Failed to register instrument: {register_result.stderr}")
-                return False
+            try:
+                register_result = subprocess.run(
+                    register_cmd,
+                    capture_output=True,
+                    text=True,
+                    check=True  # Changed to True to raise CalledProcessError on non-zero exit
+                )
                 
-            logger.info("Instrument registered successfully")
-            if register_result.stdout:
-                logger.debug(f"Register command output: {register_result.stdout}")
+                logger.info("Instrument registered successfully")
+                if register_result.stdout:
+                    logger.debug(f"Register command output: {register_result.stdout}")
+            except subprocess.CalledProcessError as e:
+                logger.warning(
+                    f"Instrument registration failed for '{config.instrument.class_name}'. "
+                    f"Pipeline will continue. Original error: {e.stderr}"
+                )
             
         return True
         
@@ -164,7 +166,7 @@ def verify_repository(repo_path: str) -> Dict[str, Any]:
             
         # Try to get repository information
         try:
-            cmd = ["butler", "info", str(repo_path_obj)]
+            cmd = ["butler", "query-collections", str(repo_path_obj)]
             info_result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -176,46 +178,20 @@ def verify_repository(repo_path: str) -> Dict[str, Any]:
                 # Parse basic info from output
                 result['info']['raw_output'] = info_result.stdout
                 
-                # Extract key information
-                for line in info_result.stdout.split('\n'):
-                    if ':' in line:
-                        key, value = line.split(':', 1)
-                        key = key.strip()
-                        value = value.strip()
-                        if key and value:
-                            result['info'][key.lower().replace(' ', '_')] = value
-            else:
-                warning_msg = f"Could not get repository info: {info_result.stderr}"
-                logger.debug(f"Adding warning message: {warning_msg}")
-                result['warnings'].append(warning_msg)
-                
-        except Exception as e:
-            result['warnings'].append(f"Error getting repository info: {e}")
-            
-        # Check for collections
-        try:
-            cmd = ["butler", "query-collections", str(repo_path_obj)]
-            collections_result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            
-            if collections_result.returncode == 0:
-                collections = collections_result.stdout.strip().split('\n')
+                # Store collections list
+                collections = info_result.stdout.strip().split('\n')
                 if collections and collections[0]:  # Not empty
                     result['info']['collections'] = collections
                     result['info']['collection_count'] = len(collections)
-                else:
-                    result['warnings'].append("No collections found in repository")
             else:
-                warning_msg = f"Could not query collections: {collections_result.stderr}"
+                # Log a warning for errors
+                warning_msg = f"Could not query collections: {info_result.stderr}"
                 logger.debug(f"Adding warning message: {warning_msg}")
                 result['warnings'].append(warning_msg)
                 
         except Exception as e:
             result['warnings'].append(f"Error querying collections: {e}")
+            
             
         # Check registry health
         try:
@@ -273,24 +249,6 @@ def get_repository_info(repo_path: str) -> Optional[Dict[str, Any]]:
             
         info = {}
         
-        # Get basic info
-        cmd = ["butler", "info", str(repo_path_obj)]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        
-        # Parse the output
-        for line in result.stdout.split('\n'):
-            if ':' in line:
-                key, value = line.split(':', 1)
-                key = key.strip()
-                value = value.strip()
-                if key and value:
-                    info[key.lower().replace(' ', '_')] = value
-                    
         # Get collections
         cmd = ["butler", "query-collections", str(repo_path_obj)]
         result = subprocess.run(
@@ -303,6 +261,7 @@ def get_repository_info(repo_path: str) -> Optional[Dict[str, Any]]:
         collections = result.stdout.strip().split('\n')
         if collections and collections[0]:  # Not empty
             info['collections'] = collections
+            info['collection_count'] = len(collections)
             
         return info
         
