@@ -16,8 +16,9 @@ Key Components:
 
 # Import main data access classes
 from .data_fetcher import LsstDataFetcher
-from .config_examples import ButlerConfig
+from .config_examples import ButlerConfig, get_rsp_config, get_production_config
 from .butler_client import ButlerClient
+from .rsp_tap_client import RSPTAPClient, create_rsp_client
 from .coordinate_utils import CoordinateConverter
 from .cache_manager import CacheManager
 
@@ -33,9 +34,13 @@ __all__ = [
     "LsstDataFetcher",
     "ButlerConfig",
     "ButlerClient",
+    "RSPTAPClient",
+    "create_rsp_client",
     "CoordinateConverter",
     "CacheManager",
     "DataAccessError",
     "ButlerConnectionError",
-    "CoordinateConversionError"
+    "CoordinateConversionError",
+    "get_rsp_config",
+    "get_production_config"
 ]

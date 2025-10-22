@@ -61,7 +61,14 @@ class ButlerRepoManager:
             # Determine repository path and setup method
             repo_path, needs_creation = self._determine_repository_path()
             self.repo_path = repo_path
-            
+
+            # Handle remote Butler server case
+            if self.config.data_source.get('type') == 'butler_server':
+                logger.info("Using remote Butler server - no local repository setup needed")
+                # Initialize remote data fetcher
+                self._initialize_remote_data_fetcher()
+                return True, "remote_butler_server"
+
             if needs_creation:
                 logger.info(f"Creating new Butler repository at {repo_path}")
                 success = self._create_and_setup_repository(repo_path)
@@ -73,11 +80,11 @@ class ButlerRepoManager:
                 verification = verify_repository(str(repo_path))
                 if verification["errors"]:
                     logger.warning(f"Repository verification warnings: {verification['errors']}")
-            
+
             # Initialize data fetcher if repository is ready
             if self.config.data_source.get('type') in ['butler_repo', 'data_folder']:
                 self._initialize_data_fetcher()
-            
+
             return True, str(repo_path)
             
         except Exception as e:
@@ -318,6 +325,48 @@ class ButlerRepoManager:
             Data fetcher instance if available
         """
         return self.data_fetcher
+
+    def _initialize_remote_data_fetcher(self) -> None:
+        """Initialize RIPPLe data fetcher for remote Butler server with RSP authentication."""
+        if not LsstDataFetcher or not DataAccessButlerConfig:
+            logger.warning("Data access modules not available for remote Butler")
+            return
+
+        try:
+            # Load token from environment variable
+            import os
+            access_token = os.environ.get("RSP_ACCESS_TOKEN")
+            if not access_token:
+                logger.warning("RSP_ACCESS_TOKEN environment variable not found")
+                return
+
+            # Get RSP configuration from data_source
+            ds_config = self.config.data_source
+            server_url = ds_config.get('server_url')
+            auth_method = ds_config.get('auth_method', 'token')
+            token_username = ds_config.get('token_username', 'x-oauth-basic')
+            collections = ds_config.get('collections', [])
+
+            # Create remote data access configuration
+            da_config = DataAccessButlerConfig(
+                server_url=server_url,
+                access_token=access_token,
+                token_username=token_username,
+                auth_method=auth_method,
+                collections=collections,
+                instrument=self.config.instrument.name,
+                cache_size=self.config.processing.get('cache_size', 5000),
+                enable_performance_monitoring=self.config.processing.get('enable_performance_monitoring', True),
+                timeout=self.config.processing.get('timeout', 120.0),
+                retry_attempts=self.config.processing.get('retry_attempts', 3)
+            )
+
+            self.data_fetcher = LsstDataFetcher(da_config)
+            logger.info("Remote data fetcher initialized successfully with RSP authentication")
+
+        except Exception as e:
+            logger.warning(f"Could not initialize remote data fetcher: {e}")
+            self.data_fetcher = None
     
     def _log_ingestion_summary(self, results: Dict[str, Any]) -> None:
         """Log summary of ingestion results."""

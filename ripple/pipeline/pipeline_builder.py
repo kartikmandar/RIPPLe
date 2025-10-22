@@ -64,8 +64,8 @@ class PipelineBuilder:
         # Check for data_source stage
         if hasattr(self.config, "data_source"):
             logger.debug("Found 'data_source' attribute in config. Creating DataSourceStage.")
-            data_source_config = getattr(self.config, "data_source", {})
-            stages_list.append(DataSourceStage(config=data_source_config))
+            # Pass the full configuration to DataSourceStage so it can access data_source properly
+            stages_list.append(DataSourceStage(config=full_config_dict))
         
         # Check for processing stage
         if hasattr(self.config, "processing"):

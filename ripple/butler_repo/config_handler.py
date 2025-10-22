@@ -174,29 +174,70 @@ def validate_config(config: RepoConfig) -> None:
         raise ValueError("Instrument class name is required")
     
     # Validate butler config
-    if config.butler.registry_db not in ['sqlite', 'postgresql']:
+    if config.butler.registry_db not in ['sqlite', 'postgresql', 'remote']:
         raise ValueError(f"Invalid registry database: {config.butler.registry_db}")
-    
+
     if config.butler.registry_db == 'postgresql' and not config.butler.postgres_url:
         raise ValueError("PostgreSQL URL required when using PostgreSQL registry")
     
     # Note: Pipeline stage configurations (data_source, ingestion, processing, model)
     # are now flexible dictionaries and are not validated here.
     # Individual stages are responsible for validating their own configurations.
-    
+
+    # Validate RSP-specific configuration if needed
+    validate_rsp_configuration(config)
+
     logger.info("Core configuration validated successfully")
 
 
 def _expand_env_vars(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively expand environment variables in configuration."""
     if isinstance(config_dict, dict):
-        return {k: _expand_env_vars(v) for k, v in config_dict.items()}
+        # Special handling for RSP authentication
+        result = {}
+        for k, v in config_dict.items():
+            if k == 'auth_method' and v == 'token':
+                # Ensure RSP_ACCESS_TOKEN is available when using token auth
+                if not os.environ.get("RSP_ACCESS_TOKEN"):
+                    logger.warning("RSP_ACCESS_TOKEN environment variable not found, but token authentication is requested")
+            result[k] = _expand_env_vars(v)
+        return result
     elif isinstance(config_dict, list):
         return [_expand_env_vars(item) for item in config_dict]
     elif isinstance(config_dict, str):
         return os.path.expandvars(config_dict)
     else:
         return config_dict
+
+def validate_rsp_configuration(config: RepoConfig) -> None:
+    """
+    Validate RSP-specific configuration requirements.
+
+    Parameters
+    ----------
+    config : RepoConfig
+        Configuration to validate
+
+    Raises
+    ------
+    ValueError
+        If RSP configuration is invalid
+    """
+    data_source = config.data_source
+
+    if data_source.get('type') == 'butler_server':
+        # Check required fields for RSP access
+        if not data_source.get('server_url'):
+            raise ValueError("server_url is required for butler_server data source")
+
+        if data_source.get('auth_method') == 'token':
+            if not os.environ.get("RSP_ACCESS_TOKEN"):
+                raise ValueError("RSP_ACCESS_TOKEN environment variable is required for token authentication")
+
+            if not data_source.get('collections'):
+                raise ValueError("collections are required for Butler server access")
+
+        logger.info("RSP configuration validated successfully")
 
 
 def get_default_config() -> RepoConfig:

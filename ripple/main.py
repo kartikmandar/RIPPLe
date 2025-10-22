@@ -21,6 +21,20 @@ from typing import Optional, Dict, Any
 # Add ripple to path if needed
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Load environment variables from .env file if it exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # If python-dotenv is not available, manually load .env file
+    env_file = Path('.env')
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                if line.strip() and not line.startswith('#'):
+                    key, value = line.strip().split('=', 1)
+                    os.environ[key] = value
+
 from ripple.butler_repo import ButlerRepoManager, load_config, get_default_config, save_config
 from ripple.butler_repo.utils import check_lsst_environment, validate_butler_command
 from ripple.data_access import LsstDataFetcher, ButlerConfig
