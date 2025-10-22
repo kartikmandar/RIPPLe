@@ -100,8 +100,11 @@ class DataSourceStage(PipelineStage):
 
             self.logger.info("RSP access token found.")
 
+            # Get SIA URL from configuration if available
+            sia_url = self.data_source_config.get('sia_url')
+
             # Initialize RSP TAP client using PyVO
-            self.rsp_tap_client = create_rsp_client(access_token=access_token)
+            self.rsp_tap_client = create_rsp_client(access_token=access_token, sia_url=sia_url)
 
             # Test connection
             if self.rsp_tap_client.test_connection():
