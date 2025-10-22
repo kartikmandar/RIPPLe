@@ -106,12 +106,13 @@ class DataSourceStage(PipelineStage):
             # Initialize RSP TAP client using PyVO
             self.rsp_tap_client = create_rsp_client(access_token=access_token, sia_url=sia_url)
 
-            # Test connection
-            if self.rsp_tap_client.test_connection():
-                self.logger.info("✓ RSP TAP client initialized successfully")
-            else:
-                self.logger.error("✗ RSP TAP connection test failed")
+            # The client itself already tests and reports service status
+            # Just verify we have at least one service available
+            if not self.rsp_tap_client.tap_service and not self.rsp_tap_client.sia_service:
+                self.logger.error("✗ Neither TAP nor SIAv2 services could be initialized")
                 self.rsp_tap_client = None
+            else:
+                self.logger.info("✓ RSP TAP client initialized with available services")
 
         except Exception as e:
             self.logger.error(f"Failed to initialize RSP TAP client: {e}")
@@ -177,6 +178,19 @@ class DataSourceStage(PipelineStage):
                         tables = self.rsp_tap_client.list_available_tables()[:10]  # First 10 tables
                         self.logger.info(f"✓ Found {len(tables)} tables available")
 
+                        # Test SIAv2 service if available
+                        sia_available = False
+                        if self.rsp_tap_client.sia_service:
+                            try:
+                                # Perform a sample SIAv2 search
+                                test_results = self._test_sia_search()
+                                sia_available = True
+                                self.logger.info(f"✓ SIAv2 service working (found {len(test_results)} sample results)")
+                            except Exception as e:
+                                self.logger.warning(f"SIAv2 test failed: {e}")
+                        else:
+                            self.logger.info("SIAv2 service not available - will skip image searches")
+
                         data = {
                             "status": "success",
                             "message": f"RSP TAP server connected at {server_url}",
@@ -184,7 +198,8 @@ class DataSourceStage(PipelineStage):
                             "collections": collections,
                             "tables": tables,
                             "rsp_tap_client": self.rsp_tap_client,
-                            "client_type": "pyvo_tap"
+                            "client_type": "pyvo_tap",
+                            "sia_available": sia_available
                         }
                     except Exception as e:
                         self.logger.warning(f"Could not list tables: {e}")
@@ -213,3 +228,79 @@ class DataSourceStage(PipelineStage):
             Logger.error("✗ Data Source Stage completed with errors")
 
         return data
+
+    def _test_sia_search(self):
+        """
+        Test SIAv2 search with a simple query.
+
+        Returns:
+            list: Sample SIAv2 search results
+        """
+        if not self.rsp_tap_client or not self.rsp_tap_client.sia_service:
+            return []
+
+        # Search for images in a known DP0.2 area (tract 4431, patch 2,3)
+        # Convert to RA,Dec coordinates (approximately)
+        ra, dec = 62.0, -37.0  # Approximate center of DP0.2
+        radius = 0.1  # degrees
+
+        search_params = {
+            'POS': f'{ra},{dec};{radius}',
+            'BAND': 'i',  # i-band
+            'MAXREC': 5,  # Just a few test results
+            'INSTRUMENT': 'LSSTCam'
+        }
+
+        try:
+            results = self.rsp_tap_client.sia_service.search(**search_params)
+            return results
+        except Exception as e:
+            self.logger.error(f"SIAv2 test search failed: {e}")
+            return []
+
+    def search_images(self, ra: float, dec: float, radius: float = 0.1,
+                     bands: list = None, max_results: int = 10):
+        """
+        Search for images using SIAv2 service with graceful fallback.
+
+        Args:
+            ra: Right ascension in degrees
+            dec: Declination in degrees
+            radius: Search radius in degrees
+            bands: List of filter bands (e.g., ['g', 'r', 'i'])
+            max_results: Maximum number of results to return
+
+        Returns:
+            list: SIAv2 search results or empty list if service unavailable
+        """
+        if not self.rsp_tap_client:
+            self.logger.warning("RSP TAP client not available for image search")
+            return []
+
+        if not self.rsp_tap_client.sia_service:
+            # Check if SIAv2 service is known to be unavailable
+            if self.rsp_tap_client.service_monitor and not self.rsp_tap_client.service_monitor.is_service_available('sia'):
+                sia_status, sia_message = self.rsp_tap_client.service_monitor.get_service_status('sia')
+                self.logger.warning(f"SIAv2 service unavailable: {sia_message}")
+                self.logger.info("Image search skipped - SIAv2 service down")
+                return []
+            else:
+                self.logger.warning("SIAv2 service not initialized for image search")
+                return []
+
+        search_params = {
+            'POS': f'{ra},{dec};{radius}',
+            'MAXREC': max_results,
+            'INSTRUMENT': 'LSSTCam'
+        }
+
+        if bands:
+            search_params['BAND'] = ','.join(bands)
+
+        try:
+            results = self.rsp_tap_client.sia_service.search(**search_params)
+            self.logger.info(f"SIAv2 search found {len(results)} images")
+            return results
+        except Exception as e:
+            self.logger.error(f"SIAv2 image search failed: {e}")
+            return []

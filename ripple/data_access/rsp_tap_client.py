@@ -18,6 +18,7 @@ except ImportError:
     raise ImportError("PyVO is required for RSP external access. Install with: pip install pyvo")
 
 from .exceptions import DataAccessError, ButlerConnectionError
+from .service_monitor import create_service_monitor
 
 
 class RSPTAPClient:
@@ -37,13 +38,15 @@ class RSPTAPClient:
     SIA_URL_DP1 = "https://data.lsst.cloud/api/dp1/query"
     SIA_URL = SIA_URL_DP02  # Default to DP0.2
 
-    def __init__(self, access_token: Optional[str] = None, sia_url: Optional[str] = None):
+    def __init__(self, access_token: Optional[str] = None, sia_url: Optional[str] = None,
+                 enable_service_monitor: bool = True):
         """
         Initialize RSP TAP client.
 
         Args:
             access_token: RSP access token for authentication
             sia_url: SIA service URL (optional, defaults to DP0.2)
+            enable_service_monitor: Enable service status monitoring
         """
         self.access_token = access_token or os.environ.get("RSP_ACCESS_TOKEN")
 
@@ -53,8 +56,18 @@ class RSPTAPClient:
         # Use provided SIA URL or default to DP0.2
         self.SIA_URL = sia_url or self.SIA_URL_DP02
 
+        # Initialize service monitor
+        self.service_monitor = create_service_monitor(
+            tap_url=self.TAP_URL,
+            sia_url=self.SIA_URL
+        ) if enable_service_monitor else None
+
         self._setup_authentication()
         self._initialize_services()
+
+        # Check service status and provide user feedback
+        if self.service_monitor:
+            self._check_and_report_service_status()
 
     def _setup_authentication(self):
         """Set up authentication for RSP TAP access."""
@@ -72,14 +85,65 @@ class RSPTAPClient:
 
         logging.info("RSP TAP and SIA authentication configured")
 
-    def _initialize_services(self):
-        """Initialize TAP and SIA services."""
-        try:
-            # For RSP, we need to use custom authentication headers
-            # Create a session with proper authentication
-            import requests
-            from requests.auth import AuthBase
+    def _check_and_report_service_status(self):
+        """Check service status and provide user feedback."""
+        if not self.service_monitor:
+            return
 
+        print("\n" + "="*60)
+        print("RSP Service Status Check")
+        print("="*60)
+
+        services = self.service_monitor.check_all_services()
+
+        for service_name, (status, message) in services.items():
+            if service_name == 'tap':
+                service_display = "TAP (Catalog Service)"
+            elif service_name == 'sia':
+                service_display = "SIAv2 (Image Service)"
+            else:
+                service_display = service_name.upper()
+
+            status_icon = "✓" if status else "✗"
+            status_text = "UP" if status else "DOWN"
+            print(f"{status_icon} {service_display}: {status_text}")
+            print(f"   Details: {message}")
+
+        # Provide recommendations
+        recommendations = self.service_monitor.get_service_recommendations()
+
+        print("\nRecommendations:")
+        for i, rec in enumerate(recommendations['recommendations'], 1):
+            print(f"{i}. {rec}")
+
+        if recommendations['workarounds']:
+            print("\nWorkarounds:")
+            for i, workaround in enumerate(recommendations['workarounds'], 1):
+                print(f"• {workaround}")
+
+        print("="*60)
+
+    def _initialize_services(self):
+        """Initialize TAP and SIA services with graceful handling of unavailability."""
+        try:
+            import requests
+            from requests.auth import AuthBase, HTTPBasicAuth
+
+            # Check service availability before attempting connections
+            tap_available = True
+            sia_available = True
+
+            if self.service_monitor:
+                tap_available, tap_message = self.service_monitor.get_service_status('tap')
+                sia_available, sia_message = self.service_monitor.get_service_status('sia')
+
+                if not tap_available:
+                    logging.warning(f"TAP service unavailable: {tap_message}")
+                if not sia_available:
+                    logging.warning(f"SIAv2 service unavailable: {sia_message}")
+
+            # Create separate authentication sessions for TAP and SIAv2
+            # TAP service uses Bearer token authentication
             class BearerTokenAuth(AuthBase):
                 """Custom authentication class for bearer token."""
                 def __init__(self, token):
@@ -89,33 +153,65 @@ class RSPTAPClient:
                     r.headers['Authorization'] = f'Bearer {self.token}'
                     return r
 
-            # Create authenticated session
-            auth_session = requests.Session()
-            auth_session.auth = BearerTokenAuth(self.access_token)
-
-            # Initialize TAP service for catalog queries with custom session
-            self.tap_service = TAPService(self.TAP_URL, session=auth_session)
-            logging.info(f"Connected to RSP TAP service: {self.TAP_URL}")
-
-            # Initialize SIAv2 service for image access with custom session
-            # Note: Rubin's SIAv2 implementation is custom and may not support standard capabilities discovery
-            try:
-                # Try standard SIAv2 service initialization first
-                self.sia_service = SIA2Service(self.SIA_URL, session=auth_session)
-                logging.info(f"Connected to RSP SIAv2 service: {self.SIA_URL}")
-            except Exception as e:
-                # If standard initialization fails, create a custom SIAv2 client for Rubin's implementation
-                logging.warning(f"Standard SIAv2 initialization failed, creating custom client for Rubin SIAv2: {e}")
+            # Initialize TAP service for catalog queries
+            self.tap_service = None
+            if tap_available:
                 try:
-                    # Create a custom SIAv2 service that bypasses capabilities discovery
-                    self.sia_service = self._create_custom_sia_service(auth_session)
-                    logging.info(f"Connected to RSP custom SIAv2 service: {self.SIA_URL}")
-                except Exception as e2:
-                    logging.error(f"Failed to create custom SIAv2 service: {e2}")
+                    # Create TAP session with Bearer token authentication
+                    tap_session = requests.Session()
+                    tap_session.auth = BearerTokenAuth(self.access_token)
+
+                    # Initialize TAP service for catalog queries
+                    self.tap_service = TAPService(self.TAP_URL, session=tap_session)
+                    logging.info(f"Connected to RSP TAP service: {self.TAP_URL}")
+                except Exception as e:
+                    logging.error(f"Failed to initialize TAP service: {e}")
+                    self.tap_service = None
+            else:
+                logging.info("Skipping TAP service initialization - service unavailable")
+
+            # Initialize SIAv2 service for image access
+            self.sia_service = None
+            if sia_available:
+                try:
+                    # SIAv2 service uses Basic authentication with x-oauth-basic as username
+                    # Create SIAv2 session with Basic authentication
+                    sia_session = requests.Session()
+                    sia_session.auth = HTTPBasicAuth("x-oauth-basic", self.access_token)
+
+                    # Note: Rubin's SIAv2 implementation is custom and may not support standard capabilities discovery
+                    try:
+                        # Try standard SIAv2 service initialization first
+                        self.sia_service = SIA2Service(self.SIA_URL, session=sia_session)
+                        logging.info(f"Connected to RSP SIAv2 service: {self.SIA_URL}")
+                    except Exception as e:
+                        # If standard initialization fails, create a custom SIAv2 client for Rubin's implementation
+                        logging.warning(f"Standard SIAv2 initialization failed, creating custom client for Rubin SIAv2: {e}")
+                        try:
+                            # Create a custom SIAv2 service that bypasses capabilities discovery
+                            self.sia_service = self._create_custom_sia_service(sia_session)
+                            logging.info(f"Connected to RSP custom SIAv2 service: {self.SIA_URL}")
+                        except Exception as e2:
+                            logging.error(f"Failed to create custom SIAv2 service: {e2}")
+                            self.sia_service = None
+                except Exception as e:
+                    logging.error(f"Failed to initialize SIAv2 service: {e}")
                     self.sia_service = None
+            else:
+                logging.info("Skipping SIAv2 service initialization - service unavailable")
+
+            # Log summary of initialization
+            if self.tap_service and self.sia_service:
+                logging.info("✓ Both TAP and SIAv2 services initialized successfully")
+            elif self.tap_service:
+                logging.info("✓ TAP service initialized, SIAv2 service unavailable")
+            elif self.sia_service:
+                logging.info("✓ SIAv2 service initialized, TAP service unavailable")
+            else:
+                logging.warning("✗ Neither TAP nor SIAv2 services could be initialized")
 
         except Exception as e:
-            raise ButlerConnectionError(f"Failed to connect to RSP services: {e}")
+            raise ButlerConnectionError(f"Failed to initialize RSP services: {e}")
 
     def _create_custom_sia_service(self, auth_session):
         """
@@ -146,13 +242,218 @@ class RSPTAPClient:
                 """
                 Execute SIAv2 search against Rubin's custom implementation.
 
-                This method should handle the SIAv2 parameters and return results
-                in the expected format for the RIPPLe pipeline.
+                This method handles SIAv2 parameters and returns structured results
+                for the RIPPLe pipeline.
+
+                Args:
+                    **kwargs: SIAv2 parameters (POS, BAND, MAXREC, TIME, etc.)
+
+                Returns:
+                    List of dictionaries containing image metadata
                 """
-                # For now, just return empty results - SIAv2 functionality
-                # can be implemented later as needed
-                logging.info(f"Custom SIAv2 search called with parameters: {kwargs}")
+                import json
+                import urllib.parse
+
+                logging.info(f"Executing SIAv2 search with parameters: {kwargs}")
+
+                try:
+                    # Convert SIAv2 parameters to Rubin's format
+                    params = self._convert_sia_parameters(kwargs)
+
+                    # Make POST request to Rubin SIAv2 endpoint
+                    response = self.session.post(
+                        self.base_url,
+                        data=params,
+                        headers={
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Accept': 'application/json'
+                        }
+                    )
+
+                    response.raise_for_status()
+
+                    # Parse Rubin's response format
+                    results = self._parse_sia_response(response)
+
+                    logging.info(f"SIAv2 search returned {len(results)} results")
+                    return results
+
+                except Exception as e:
+                    logging.error(f"SIAv2 search failed: {e}")
+                    return []
+
+            def _convert_sia_parameters(self, kwargs):
+                """
+                Convert standard SIAv2 parameters to Rubin's format.
+
+                Args:
+                    kwargs: Standard SIAv2 parameters
+
+                Returns:
+                    dict: Parameters formatted for Rubin's SIAv2 endpoint
+                """
+                params = {}
+
+                # Position search (RA,Dec;radius)
+                if 'POS' in kwargs:
+                    params['POS'] = kwargs['POS']
+
+                # Filter bands
+                if 'BAND' in kwargs:
+                    # Convert list or single band to string
+                    bands = kwargs['BAND']
+                    if isinstance(bands, (list, tuple)):
+                        params['BAND'] = ','.join(bands)
+                    else:
+                        params['BAND'] = bands
+
+                # Maximum number of results
+                if 'MAXREC' in kwargs:
+                    params['MAXREC'] = str(kwargs['MAXREC'])
+
+                # Time range (ISO format)
+                if 'TIME' in kwargs:
+                    params['TIME'] = kwargs['TIME']
+
+                # Instrument
+                if 'INSTRUMENT' in kwargs:
+                    params['INSTRUMENT'] = kwargs['INSTRUMENT']
+
+                # Exposure time
+                if 'EXPTIME' in kwargs:
+                    params['EXPTIME'] = kwargs['EXPTIME']
+
+                # Calibration level
+                if 'CALIB' in kwargs:
+                    params['CALIB'] = kwargs['CALIB']
+
+                return params
+
+            def _parse_sia_response(self, response):
+                """
+                Parse Rubin's SIAv2 response into structured format.
+
+                Args:
+                    response: HTTP response from Rubin SIAv2 endpoint
+
+                Returns:
+                    List of dictionaries with image metadata
+                """
+                try:
+                    # Try to parse as JSON first
+                    if response.headers.get('content-type', '').startswith('application/json'):
+                        data = response.json()
+                        return self._parse_json_response(data)
+
+                    # Try to parse as VOTable
+                    elif 'votable' in response.headers.get('content-type', '').lower():
+                        return self._parse_votable_response(response.text)
+
+                    # Fallback: try to parse as text
+                    else:
+                        return self._parse_text_response(response.text)
+
+                except Exception as e:
+                    logging.error(f"Failed to parse SIAv2 response: {e}")
+                    return []
+
+            def _parse_json_response(self, data):
+                """Parse JSON response from Rubin SIAv2."""
+                results = []
+
+                # Handle different JSON structures Rubin might return
+                if isinstance(data, dict):
+                    if 'data' in data:
+                        # Standard format with data array
+                        for item in data['data']:
+                            results.append(self._normalize_image_metadata(item))
+                    elif 'results' in data:
+                        # Alternative format
+                        for item in data['results']:
+                            results.append(self._normalize_image_metadata(item))
+                    elif isinstance(data, list):
+                        # Direct array of results
+                        for item in data:
+                            results.append(self._normalize_image_metadata(item))
+
+                return results
+
+            def _parse_votable_response(self, votable_text):
+                """Parse VOTable response from Rubin SIAv2."""
+                try:
+                    from astropy.io.votable import parse
+                    votable = parse(votable_text)
+                    results = []
+
+                    for table in votable.iter_tables():
+                        for row in table.array:
+                            metadata = {}
+                            for col_name, col_value in zip(table.colnames, row):
+                                metadata[col_name] = col_value
+                            results.append(self._normalize_image_metadata(metadata))
+
+                    return results
+
+                except ImportError:
+                    logging.warning("astropy not available for VOTable parsing")
+                    return []
+                except Exception as e:
+                    logging.error(f"VOTable parsing failed: {e}")
+                    return []
+
+            def _parse_text_response(self, text):
+                """Parse plain text response (fallback)."""
+                # Basic text parsing - would need to know Rubin's text format
+                logging.warning("Text response parsing not implemented")
                 return []
+
+            def _normalize_image_metadata(self, raw_metadata):
+                """
+                Normalize image metadata from various formats to standard structure.
+
+                Args:
+                    raw_metadata: Raw metadata from Rubin's response
+
+                Returns:
+                    dict: Normalized image metadata
+                """
+                normalized = {
+                    'id': raw_metadata.get('id', ''),
+                    'title': raw_metadata.get('title', ''),
+                    'instrument': raw_metadata.get('instrument', ''),
+                    'band': raw_metadata.get('band', ''),
+                    'ra': float(raw_metadata.get('ra', 0)),
+                    'dec': float(raw_metadata.get('dec', 0)),
+                    'size_arcsec': float(raw_metadata.get('size_arcsec', 0)),
+                    'access_url': raw_metadata.get('access_url', ''),
+                    'access_format': raw_metadata.get('access_format', ''),
+                    'fov': raw_metadata.get('fov', ''),
+                    'exptime': float(raw_metadata.get('exptime', 0)),
+                    'obs_collection': raw_metadata.get('obs_collection', ''),
+                    't_exptime': raw_metadata.get('t_exptime', ''),
+                    't_min': raw_metadata.get('t_min', ''),
+                    't_max': raw_metadata.get('t_max', ''),
+                    'em_band': raw_metadata.get('em_band', ''),
+                    'publisher_id': raw_metadata.get('publisher_id', ''),
+                    'reference': raw_metadata.get('reference', ''),
+                    'mirror_radius': raw_metadata.get('mirror_radius', ''),
+                    'skypol': raw_metadata.get('skypol', ''),
+                    's_region': raw_metadata.get('s_region', ''),
+                    's_resolution': raw_metadata.get('s_resolution', ''),
+                    's_xel1': raw_metadata.get('s_xel1', ''),
+                    's_xel2': raw_metadata.get('s_xel2', ''),
+                    's_ucd': raw_metadata.get('s_ucd', ''),
+                    's_utype': raw_metadata.get('s_utype', ''),
+                    'dataproduct_type': raw_metadata.get('dataproduct_type', 'image'),
+                    'obs_id': raw_metadata.get('obs_id', ''),
+                    'collection': raw_metadata.get('collection', ''),
+                    'facet': raw_metadata.get('facet', ''),
+                    'maxrec': raw_metadata.get('maxrec', ''),
+                    'format': raw_metadata.get('format', ''),
+                    'filesize': raw_metadata.get('filesize', ''),
+                }
+
+                return normalized
 
             def run_sync(self, **kwargs):
                 """Alias for search method."""
@@ -253,6 +554,16 @@ class RSPTAPClient:
         Returns:
             List of image metadata records
         """
+        # Check if SIAv2 service is available
+        if not self.sia_service:
+            if self.service_monitor and not self.service_monitor.is_service_available('sia'):
+                sia_status, sia_message = self.service_monitor.get_service_status('sia')
+                logging.warning(f"SIAv2 service unavailable: {sia_message}")
+                logging.info("SIAv2 image search skipped - service unavailable")
+                return []
+            else:
+                raise DataAccessError("SIAv2 service not initialized")
+
         try:
             # Create SIAv2 query
             query = self.sia_service.create_query(
