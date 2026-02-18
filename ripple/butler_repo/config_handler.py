@@ -75,13 +75,32 @@ class RepoConfig:
     # Core configurations that have a fixed structure
     instrument: InstrumentConfig
     butler: ButlerConfig
-    
+
     # Pipeline stage configurations, kept as flexible dictionaries
     data_source: Dict[str, Any]
     ingestion: Dict[str, Any]
     processing: Dict[str, Any]
     model: Dict[str, Any] # Added for the model stage
-    
+    output: Dict[str, Any] # Added for output configuration
+
+    def get(self, key: str, default=None):
+        """
+        Get configuration value by key, with optional default.
+        This makes RepoConfig compatible with dict-like access.
+        """
+        # Try to get from stage-specific configs first
+        for stage_config in [self.data_source, self.ingestion, self.processing, self.model, self.output]:
+            if key in stage_config:
+                return stage_config[key]
+
+        # Fallback to instrument and butler configs
+        if hasattr(self.instrument, key):
+            return getattr(self.instrument, key)
+        if hasattr(self.butler, key):
+            return getattr(self.butler, key)
+
+        return default
+
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'RepoConfig':
         """Create RepoConfig from dictionary."""
@@ -101,7 +120,8 @@ class RepoConfig:
             data_source=config_dict.get('data_source', {}),
             ingestion=config_dict.get('ingestion', {}),
             processing=config_dict.get('processing', {}),
-            model=config_dict.get('model', {})
+            model=config_dict.get('model', {}),
+            output=config_dict.get('output', {})
         )
 
 

@@ -56,21 +56,34 @@ class ButlerConfig:
         
         if self.cache_size < 0:
             raise ValueError("cache_size must be non-negative")
-        
+
         if self.timeout <= 0:
             raise ValueError("timeout must be positive")
-        
+
         if self.retry_attempts < 0:
             raise ValueError("retry_attempts must be non-negative")
-        
+
         if self.max_connections <= 0:
             raise ValueError("max_connections must be positive")
-        
+
         if self.max_workers <= 0:
             raise ValueError("max_workers must be positive")
-        
+
         if self.batch_size <= 0:
             raise ValueError("batch_size must be positive")
+
+    def get(self, key: str, default=None):
+        """
+        Get configuration value with default fallback.
+
+        Args:
+            key (str): Configuration key
+            default: Default value if key not found
+
+        Returns:
+            Configuration value or default
+        """
+        return getattr(self, key, default)
 
 
 def get_default_config():

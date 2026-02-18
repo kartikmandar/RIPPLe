@@ -21,6 +21,7 @@ from .butler_client import ButlerClient
 from .rsp_tap_client import RSPTAPClient, create_rsp_client
 from .coordinate_utils import CoordinateConverter
 from .cache_manager import CacheManager
+from .coordinate_resolver import CoordinateResolver, SpatialQueryHelper, create_coordinate_resolver, create_spatial_helper
 
 # Import custom exceptions
 from .exceptions import (

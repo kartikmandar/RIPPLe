@@ -36,7 +36,10 @@ class ServiceStatusMonitor:
         self.sia_url = sia_url
         self.cache_duration = timedelta(minutes=cache_duration_minutes)
 
-        # Service status cache
+        # Connection pooling configuration (must be set before creating session)
+        self._connection_pool_size = 3
+
+        # Initialize service status cache
         self._status_cache: Dict[str, Tuple[bool, datetime, str]] = {}
 
         # Configuration for user notification
@@ -44,6 +47,38 @@ class ServiceStatusMonitor:
         self.status_log_file.parent.mkdir(exist_ok=True)
 
         self.logger = logging.getLogger(__name__)
+
+        # Connection pooling for service health checks (initialized after _connection_pool_size)
+        self._session = self._create_robust_session()
+
+    def _create_robust_session(self) -> requests.Session:
+        """
+        Create a robust HTTP session with connection pooling.
+        """
+        session = requests.Session()
+
+        # Mount adapter with connection pooling
+        try:
+            from requests.adapters import HTTPAdapter
+            adapter = HTTPAdapter(
+                pool_connections=self._connection_pool_size,
+                pool_maxsize=10
+            )
+
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+        except ImportError:
+            # Fallback if HTTPAdapter is not available
+            session = requests.Session()
+
+        # Set headers for service identification
+        session.headers.update({
+            'User-Agent': 'RIPPLe-DataAccess/1.0',
+            'Accept': 'application/json',
+            'Connection': 'keep-alive'
+        })
+
+        return session
 
     def _is_cache_valid(self, service: str) -> bool:
         """Check if cached status is still valid."""
@@ -172,7 +207,8 @@ class ServiceStatusMonitor:
             Tuple of (is_available, message)
         """
         if self._is_cache_valid(service):
-            return self._status_cache[service][:2]
+            status, timestamp, message = self._status_cache[service]
+            return status, message
 
         if service.lower() == 'tap':
             status, message = self._check_tap_service()

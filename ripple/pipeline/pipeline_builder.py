@@ -66,12 +66,26 @@ class PipelineBuilder:
             logger.debug("Found 'data_source' attribute in config. Creating DataSourceStage.")
             # Pass the full configuration to DataSourceStage so it can access data_source properly
             stages_list.append(DataSourceStage(config=full_config_dict))
-        
+
         # Check for processing stage
         if hasattr(self.config, "processing"):
             logger.debug("Found 'processing' attribute in config. Creating PreprocessingStage.")
             processing_config = getattr(self.config, "processing", {})
-            stages_list.append(PreprocessingStage(config=processing_config))
+
+            # Debug: Log the actual processing config content
+            logger.debug(f"Processing config content: {getattr(self.config, 'processing', 'NOT_FOUND')}")
+
+            # Try to access processing config from the raw config dict
+            try:
+                if 'processing' in full_config_dict:
+                    processing_config = full_config_dict['processing']
+                    logger.debug(f"Found processing config in dict: {list(processing_config.keys())}")
+                else:
+                    logger.warning("No 'processing' key found in config dict")
+            except Exception as e:
+                logger.error(f"Error accessing processing config: {e}")
+
+            stages_list.append(PreprocessingStage(config=full_config_dict))
         
         # Placeholder for model stage
         if hasattr(self.config, "model"):

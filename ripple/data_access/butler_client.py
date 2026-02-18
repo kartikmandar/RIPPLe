@@ -1,9 +1,12 @@
 import logging
 import os
+import time
 from typing import Any, Optional, Union, List
+from functools import wraps
 
-from lsst.daf.butler import Butler, DatasetNotFoundError
+from lsst.daf.butler import Butler, DatasetNotFoundError, DataIdValueError, ButlerUserError
 from lsst.daf.butler._butler import Butler as _ButlerType
+from lsst.geom import Box2I, Point2I, Extent2I, SpherePoint, degrees
 
 from ripple.data_access.exceptions import InvalidRepositoryError
 from ripple.data_access.config_examples import ButlerConfig
@@ -234,8 +237,15 @@ class ButlerClient:
         Returns:
             Optional[Any]: The calexp object, or None if not found.
         """
+        data_id = {"visit": visit, "detector": detector}
+
+        # Validate DataId first
+        is_valid, result = self._validate_dataid('calexp', data_id)
+        if not is_valid:
+            logging.error(f"Invalid DataId for calexp: {result}")
+            return None
+
         try:
-            data_id = {"visit": visit, "detector": detector}
             return self.butler.get('calexp', dataId=data_id)
         except DatasetNotFoundError:
             logging.warning(f"calexp not found for visit={visit}, detector={detector}")
@@ -244,23 +254,38 @@ class ButlerClient:
             logging.error(f"Error retrieving calexp for visit={visit}, detector={detector}: {e}")
             return None
 
-    def get_deepCoadd(self, tract: int, patch: int, band: str = None) -> Optional[Any]:
+    def get_deepCoadd(self, tract: int, patch: int, band: str = None,
+                    bbox: Box2I = None, use_bbox: bool = False) -> Optional[Any]:
         """
-        Retrieves a deep coadded image (deepCoadd).
+        Retrieves a deep coadded image (deepCoadd) with optional bbox support.
 
         Args:
             tract (int): The tract ID.
             patch (int): The patch ID.
             band (str, optional): Filter band (e.g., 'g', 'r', 'i').
+            bbox (Box2I, optional): Bounding box for efficient cutout retrieval.
+            use_bbox (bool): Whether to use bbox parameter for efficient access.
 
         Returns:
             Optional[Any]: The deepCoadd object, or None if not found.
         """
+        data_id = {"tract": tract, "patch": patch}
+        if band:
+            data_id["band"] = band
+
+        # Validate DataId first
+        is_valid, result = self._validate_dataid('deepCoadd', data_id)
+        if not is_valid:
+            logging.error(f"Invalid DataId for deepCoadd: {result}")
+            return None
+
         try:
-            data_id = {"tract": tract, "patch": patch}
-            if band:
-                data_id["band"] = band
-            return self.butler.get('deepCoadd', dataId=data_id)
+            if use_bbox and bbox:
+                # Use bbox-based retrieval for efficiency
+                return self._get_with_bbox_retry('deepCoadd', data_id, bbox)
+            else:
+                # Standard retrieval
+                return self.butler.get('deepCoadd', dataId=data_id)
         except DatasetNotFoundError:
             band_str = f", band={band}" if band else ""
             logging.warning(f"deepCoadd not found for tract={tract}, patch={patch}{band_str}")
@@ -281,8 +306,15 @@ class ButlerClient:
         Returns:
             Optional[Any]: The source catalog object, or None if not found.
         """
+        data_id = {"visit": visit, "detector": detector}
+
+        # Validate DataId first
+        is_valid, result = self._validate_dataid('sourceTable', data_id)
+        if not is_valid:
+            logging.error(f"Invalid DataId for sourceTable: {result}")
+            return None
+
         try:
-            data_id = {"visit": visit, "detector": detector}
             return self.butler.get('sourceTable', dataId=data_id)
         except DatasetNotFoundError:
             logging.warning(f"sourceTable not found for visit={visit}, detector={detector}")
@@ -303,10 +335,17 @@ class ButlerClient:
         Returns:
             Optional[Any]: The object catalog, or None if not found.
         """
+        data_id = {"tract": tract, "patch": patch}
+        if band:
+            data_id["band"] = band
+
+        # Validate DataId first
+        is_valid, result = self._validate_dataid('objectTable', data_id)
+        if not is_valid:
+            logging.error(f"Invalid DataId for objectTable: {result}")
+            return None
+
         try:
-            data_id = {"tract": tract, "patch": patch}
-            if band:
-                data_id["band"] = band
             return self.butler.get('objectTable', dataId=data_id)
         except DatasetNotFoundError:
             band_str = f", band={band}" if band else ""
@@ -316,6 +355,156 @@ class ButlerClient:
             band_str = f", band={band}" if band else ""
             logging.error(f"Error retrieving objectTable for tract={tract}, patch={patch}{band_str}: {e}")
             return None
+
+    def query_datasets_by_tract(self, dataset_type: str, tract: int,
+                                bands: List[str] = None,
+                                where_extra: str = None) -> List[Any]:
+        """
+        Query datasets efficiently for a specific tract.
+
+        Args:
+            dataset_type (str): Type of dataset to query (e.g., 'deepCoadd')
+            tract (int): Tract number
+            bands (List[str], optional): Filter bands to include
+            where_extra (str, optional): Additional WHERE clause conditions
+
+        Returns:
+            List[Any]: List of dataset references
+        """
+        try:
+            # Build efficient WHERE clause
+            where_clause = f"tract = {tract}"
+            if where_extra:
+                where_clause += f" AND {where_extra}"
+
+            if bands:
+                band_list = "', '".join(bands)
+                where_clause += f" AND band IN ('{band_list}')"
+
+            refs = list(self.butler.registry.queryDatasets(
+                datasetType=dataset_type,
+                where=where_clause,
+                collections=self.config.collections
+            ))
+
+            logging.info(f"Found {len(refs)} datasets for tract {tract}")
+            return refs
+
+        except Exception as e:
+            logging.error(f"Failed to query datasets for tract {tract}: {e}")
+            return []
+
+    def get_available_tracts(self, dataset_type: str = "deepCoadd") -> List[int]:
+        """
+        Get list of available tracts for a dataset type.
+
+        Args:
+            dataset_type (str): Type of dataset to check
+
+        Returns:
+            List[int]: List of available tract numbers
+        """
+        try:
+            # Query distinct tracts using registry
+            refs = list(self.butler.registry.queryDatasets(
+                datasetType=dataset_type,
+                collections=self.config.collections
+            ))
+
+            # Extract unique tract numbers
+            tracts = sorted(set(ref.dataId.get("tract") for ref in refs if ref.dataId.get("tract")))
+            logging.info(f"Found {len(tracts)} available tracts for {dataset_type}")
+            return tracts
+
+        except Exception as e:
+            logging.error(f"Failed to get available tracts: {e}")
+            return []
+
+    def get_dataset_metadata(self, dataset_type: str, data_id: dict) -> dict:
+        """
+        Get metadata for a dataset without loading full data.
+
+        Args:
+            dataset_type (str): Type of dataset
+            data_id (dict): DataId for dataset
+
+        Returns:
+            dict: Metadata dictionary
+        """
+        try:
+            # Get dataset reference
+            ref = self.butler.find_dataset(dataset_type, data_id,
+                                         collections=self.config.collections)
+            if ref is None:
+                return {"exists": False, "error": "Dataset not found"}
+
+            # Get component metadata
+            metadata = {
+                "exists": True,
+                "data_id": data_id,
+                "run": ref.run,
+                "dataset_type": ref.datasetType,
+                "components": {}
+            }
+
+            # Try to get common components
+            components = ["wcs", "bbox", "psf", "metadata"]
+            for component in components:
+                try:
+                    component_path = f"{dataset_type}.{component}"
+                    metadata["components"][component] = self.butler.get(component_path, data_id)
+                except Exception as e:
+                    logging.warning(f"Could not get {component} metadata: {e}")
+                    metadata["components"][component] = None
+
+            return metadata
+
+        except Exception as e:
+            return {"exists": False, "error": str(e)}
+
+    def batch_get_datasets(self, dataset_refs: List[Any],
+                        processor_func: callable = None,
+                        max_workers: int = 4) -> List[Any]:
+        """
+        Retrieve multiple datasets in parallel using threading.
+
+        Args:
+            dataset_refs (List[Any]): List of dataset references
+            processor_func (callable, optional): Function to process each dataset
+            max_workers (int): Maximum number of worker threads
+
+        Returns:
+            List[Any]: Processed results
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
+        results = []
+
+        def process_single_ref(ref):
+            try:
+                data = self.butler.get(ref)
+                if processor_func:
+                    return processor_func(data, ref)
+                else:
+                    return {"data": data, "ref": ref, "status": "success"}
+            except Exception as e:
+                logging.error(f"Failed to process {ref.dataId}: {e}")
+                return {"data": None, "ref": ref, "status": "error", "error": str(e)}
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_ref = {
+                executor.submit(process_single_ref, ref): ref for ref in dataset_refs
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_ref.keys()):
+                ref = future_to_ref[future]
+                results.append(future.result())
+
+        logging.info(f"Processed {len(results)} datasets in parallel")
+        return results
 
     def test_connection(self) -> bool:
         """
@@ -332,3 +521,118 @@ class ButlerClient:
         except Exception as e:
             logging.error(f"Butler connection test failed: {e}")
             return False
+
+    def _validate_dataid(self, dataset_type: str, data_id: dict) -> tuple[bool, dict]:
+        """
+        Validate a DataId before using it for Butler operations.
+
+        Returns:
+            tuple[bool, dict]: (is_valid, expanded_dataId_or_error_message)
+        """
+        try:
+            # Expand DataId to check if all dimensions are valid
+            expanded = self.butler.registry.expandDataId(data_id)
+
+            # Check if dataset actually exists
+            ref = self.butler.find_dataset(dataset_type, expanded,
+                                         collections=self.config.collections)
+
+            if ref is None:
+                return False, f"Dataset {dataset_type} not found for {data_id}"
+
+            return True, expanded
+
+        except DataIdValueError as e:
+            return False, f"Invalid DataId values: {e}"
+        except Exception as e:
+            return False, f"Validation error: {e}"
+
+    def _get_with_bbox_retry(self, dataset_type: str, data_id: dict,
+                           bbox: Box2I, max_retries: int = 3) -> Optional[Any]:
+        """
+        Get dataset with bbox parameter and retry logic.
+
+        This method implements bbox-based cutout retrieval with comprehensive
+        error handling and retry logic for production use.
+        """
+        for attempt in range(max_retries):
+            try:
+                # Primary retrieval with bbox
+                result = self.butler.get(
+                    dataset_type,
+                    dataId=data_id,
+                    parameters={"bbox": bbox, "origin": "PARENT"}
+                )
+                logging.info(f"Successfully retrieved {dataset_type} with bbox on attempt {attempt + 1}")
+                return result
+
+            except DataIdValueError as e:
+                # Don't retry DataId errors - these are configuration issues
+                logging.error(f"DataId error for {dataset_type}: {e}")
+                return None
+
+            except (DatasetNotFoundError, ButlerUserError, Exception) as e:
+                # Handle missing data and other errors appropriately
+                if "not found" in str(e).lower():
+                    logging.warning(f"Dataset {dataset_type} not found: {e}")
+                    return None
+                else:
+                    # Retry other errors
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff
+                        logging.warning(f"Attempt {attempt + 1} failed for {dataset_type}, retrying in {wait_time}s: {e}")
+                        time.sleep(wait_time)
+                    else:
+                        logging.error(f"Failed to retrieve {dataset_type} after {max_retries} attempts: {e}")
+                        return None
+
+    def get_cutout(self, ra: float, dec: float, size_arcsec: float = 60.0,
+                    band: str = "i", dataset_type: str = "deepCoadd",
+                    skymap: str = None) -> Optional[Any]:
+        """
+        Get a cutout from deepCoadd at given coordinates using efficient bbox retrieval.
+
+        This method demonstrates production-ready coordinate-based cutout retrieval
+        with proper tract/patch resolution and bbox optimization.
+        """
+        try:
+            # Get skymap for coordinate resolution
+            if skymap:
+                skymap_obj = self.butler.get("skyMap", {"skymap": skymap})
+            else:
+                skymap_obj = self.butler.get("skyMap")
+
+            # Find tract and patch for coordinates
+            coord = SpherePoint(ra * degrees, dec * degrees)
+            tract_info = skymap_obj.findTract(coord)
+            patch_info = tract_info.findPatch(coord)
+
+            # Build DataId
+            data_id = {
+                "tract": tract_info.tract_id,
+                "patch": patch_info.getIndex(),
+                "band": band
+            }
+            if skymap:
+                data_id["skymap"] = skymap
+
+            # Get WCS for coordinate conversion
+            wcs = self.butler.get(f"{dataset_type}.wcs", data_id)
+            pixel_pos = wcs.skyToPixel(coord)
+
+            # Calculate bbox for cutout
+            pixel_scale = wcs.getPixelScale().asArcseconds()
+            size_pixels = int(size_arcsec / pixel_scale)
+
+            bbox = Box2I(
+                Point2I(int(pixel_pos.x - size_pixels/2),
+                       int(pixel_pos.y - size_pixels/2)),
+                Extent2I(size_pixels, size_pixels)
+            )
+
+            # Use bbox-based retrieval with retry
+            return self._get_with_bbox_retry(dataset_type, data_id, bbox)
+
+        except Exception as e:
+            logging.error(f"Failed to retrieve cutout at ({ra}, {dec}): {e}")
+            return None

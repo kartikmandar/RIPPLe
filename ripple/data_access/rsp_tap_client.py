@@ -542,7 +542,7 @@ class RSPTAPClient:
                      collection: str = "2.2i/runs/DP0.2",
                      bands: List[str] = ["g", "r", "i"]) -> List[Dict]:
         """
-        Search for images around a sky position using SIAv2.
+        Search for images around a sky position using TAP/ObsTAP (fallback from SIAv2).
 
         Args:
             ra: Right ascension in degrees
@@ -554,40 +554,112 @@ class RSPTAPClient:
         Returns:
             List of image metadata records
         """
-        # Check if SIAv2 service is available
-        if not self.sia_service:
-            if self.service_monitor and not self.service_monitor.is_service_available('sia'):
-                sia_status, sia_message = self.service_monitor.get_service_status('sia')
-                logging.warning(f"SIAv2 service unavailable: {sia_message}")
-                logging.info("SIAv2 image search skipped - service unavailable")
-                return []
-            else:
-                raise DataAccessError("SIAv2 service not initialized")
+        # First try SIAv2 if available
+        if self.sia_service and self.service_monitor and self.service_monitor.is_service_available('sia'):
+            try:
+                # Create SIAv2 query
+                query = self.sia_service.create_query(
+                    pos=f"{ra},{dec}",
+                    size=size,
+                    collection=collection,
+                    dataproduct_type="image"
+                )
+
+                # Execute query
+                result = query.execute()
+
+                # Filter by bands if specified
+                images = []
+                for record in result:
+                    band = record.get("band", "").lower()
+                    if not bands or band in bands:
+                        images.append(dict(record))
+
+                logging.info(f"Found {len(images)} images via SIAv2")
+                return images
+
+            except Exception as e:
+                logging.warning(f"SIAv2 search failed, falling back to TAP: {e}")
+
+        # Fallback to TAP/ObsTAP
+        return self._search_images_via_tap(ra, dec, size, collection, bands)
+
+    def _search_images_via_tap(self, ra: float, dec: float, size: float = 0.1,
+                               collection: str = "2.2i/runs/DP0.2",
+                               bands: List[str] = ["g", "r", "i"]) -> List[Dict]:
+        """
+        Search for images using TAP service with ObsCore table.
+
+        This is the fallback method when SIAv2 is not available.
+
+        Args:
+            ra: Right ascension in degrees
+            dec: Declination in degrees
+            size: Search radius in degrees
+            collection: LSST data collection
+            bands: Filter bands to search
+
+        Returns:
+            List of image metadata records
+        """
+        if not self.tap_service:
+            raise DataAccessError("TAP service not available")
 
         try:
-            # Create SIAv2 query
-            query = self.sia_service.create_query(
-                pos=f"{ra},{dec}",
-                size=size,
-                collection=collection,
-                dataproduct_type="image"
-            )
+            # Build ADQL query for ObsCore
+            # Convert size to search radius for the query
+            search_radius = size
 
-            # Execute query
-            result = query.execute()
+            # Create band constraint for ADQL
+            band_constraint = ""
+            if bands and len(bands) > 0:
+                band_list = "', '".join(bands)
+                band_constraint = f"AND lsst_band IN ('{band_list}')"
 
-            # Filter by bands if specified
+            # Main ObsCore query - less restrictive for DP1 data
+            query = f"""
+            SELECT dataproduct_type, dataproduct_subtype, calib_level,
+                   lsst_band, em_min, em_max, lsst_tract, lsst_patch,
+                   lsst_filter, lsst_visit, lsst_detector, t_exptime,
+                   t_min, t_max, s_ra, s_dec, s_fov, obs_id,
+                   obs_collection, o_ucd, facility_name, instrument_name,
+                   s_region, access_url, access_format
+            FROM ivoa.ObsCore
+            WHERE calib_level = 2
+              AND dataproduct_type = 'image'
+              {band_constraint}
+              AND CONTAINS(POINT('ICRS', {ra}, {dec}), s_region) = 1
+            ORDER BY lsst_visit DESC
+            """
+
+            logging.info(f"Executing TAP ObsCore query for images at ({ra:.3f}, {dec:.3f})")
+
+            # Execute the query
+            job = self.tap_service.submit_job(query)
+            job.run()
+            job.wait(phases=['COMPLETED', 'ERROR'])
+
+            if job.phase == 'ERROR':
+                raise DataAccessError(f"TAP query failed: {job.error_msg}")
+
+            # Get results
+            results = job.fetch_result().to_table()
+
+            # Convert to list of dictionaries
             images = []
-            for record in result:
-                band = record.get("band", "").lower()
-                if not bands or band in bands:
-                    images.append(dict(record))
+            for row in results:
+                image_dict = dict(row)
+                # Normalize band names to lowercase
+                if 'lsst_band' in image_dict:
+                    image_dict['band'] = image_dict['lsst_band'].lower()
+                images.append(image_dict)
 
-            logging.info(f"Found {len(images)} images")
+            logging.info(f"Found {len(images)} images via TAP ObsCore")
             return images
 
         except Exception as e:
-            raise DataAccessError(f"SIAv2 image search failed: {e}")
+            logging.error(f"TAP ObsCore search failed: {e}")
+            raise DataAccessError(f"TAP image search failed: {e}")
 
     def get_image_cutout(self, image_uri: str, ra: float, dec: float,
                         size: float = 0.05) -> Optional[np.ndarray]:
