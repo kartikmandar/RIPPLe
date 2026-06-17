@@ -116,6 +116,10 @@ venv.save/
 
 # Config yaml files
 *.yaml
+# ...but DO track the pipeline configs (override the broad *.yaml ignore above)
+!pipeline_configs/*.yaml
+# ...except the 1.2M auto-generated coordinate dump (unsafe-pickled, not safe_load-able)
+pipeline_configs/dp1_complete_extraction_64x64.yaml
 
 # AI research/reference knowledge base (kept locally, not tracked)
 AI_DOCS/

@@ -1,0 +1,41 @@
+name: "dynamic_test_pipeline"
+
+instrument:
+  name: "HSC"
+  class_name: "HSC"
+
+ingestion:
+  type: "file_system"
+  source_path: "/path/to/raw/data"
+  params:
+    format: "fits"
+    recursive: true
+
+data_source:
+  type: "butler_repo"
+  data_release: dp02
+  path: "data/test_repo"
+  collections:
+    - "test_instrument/defaults"
+    - "test_instrument/raw/all"
+  create_if_missing: true
+
+processing:
+  steps:
+    - "cleaning"
+    - "transformation"
+    - "normalization"
+  params:
+    cleaning:
+      remove_nan: true
+    transformation:
+      method: "log"
+    normalization:
+      method: "min_max"
+
+model:
+  operation: "training"
+  type: "random_forest"
+  params:
+    n_estimators: 100
+    max_depth: 10

@@ -1,0 +1,41 @@
+# RIPPLe Configuration for LSST DESC public data (DC2 simulations)
+
+# --- Butler Configuration ---
+butler: {}
+
+# --- Data Source Configuration ---
+data_source:
+  type: "butler_repo"
+  data_release: dp02
+  path: "data/lsstdesc-public"
+  collections:
+    - "2.2i/runs/DP0.2"
+
+# --- Instrument Configuration ---
+instrument:
+  name: "LSSTCam-imSim"
+  class_name: "lsst.obs.lsst.LsstCam"
+
+# --- Data Access Configuration ---
+data_access:
+  cache_path: ".ripple_cache"
+  clear_cache: false
+
+# --- Preprocessing Configuration ---
+preprocessing:
+  steps:
+    - name: "cutout_creator"
+      params:
+        cutout_size: 128
+    - name: "image_normalizer"
+      params:
+        norm_type: "z_score"
+
+# --- Model Configuration ---
+model:
+  name: "base_model"
+  params:
+    learning_rate: 0.001
+  trainer:
+    epochs: 15
+    batch_size: 64

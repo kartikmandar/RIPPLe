@@ -1,0 +1,112 @@
+# RIPPLe Pipeline Configuration for Rubin Science Platform (RSP) DP0 Data
+# This configuration connects to the remote RSP using PyVO/TAP services (API aspect)
+# Following RSP documentation for external access using IVOA standards
+
+data_source:
+  type: butler_server
+  data_release: dp02
+  server_url: "https://data.lsst.cloud/api/tap"
+  # Data repository for DP0.2 - using PyVO/TAP for external access
+  data_repo: "dp02"
+  auth_method: "token"
+  token_username: "x-oauth-basic"
+  # Token will be loaded from RSP_ACCESS_TOKEN environment variable
+  collections:
+    - "2.2i/runs/DP0.2"
+  create_if_missing: false
+  # PyVO/TAP configuration for RSP external access
+  tap_url: "https://data.lsst.cloud/api/tap"
+  sia_url: "https://data.lsst.cloud/api/dp02/query"
+
+instrument:
+  name: LSSTCam
+  class_name: lsst.obs.lsst.LsstCam
+  filters:
+    - u
+    - g
+    - r
+    - i
+    - z
+    - y
+
+# Ingestion is not needed for RSP remote access
+ingestion:
+  raw_data_pattern: ""
+  transfer_mode: direct
+  define_visits: false
+  write_curated_calibrations: false
+  skip_existing: true
+  processes: 1
+
+# Butler configuration for remote access
+butler:
+  standalone: false
+  override: false
+  registry_db: remote
+
+# Processing configuration optimized for remote data access
+processing:
+  cutout_size: 128              # pixels (larger for RSP data)
+  batch_size: 16               # Smaller batches for remote data
+  max_workers: 2               # Fewer workers to avoid overwhelming RSP
+  cache_size: 5000             # Larger cache for remote data
+  enable_performance_monitoring: true
+  timeout: 120.0               # Longer timeout for remote operations
+  retry_attempts: 3            # Retry failed requests
+
+  # Preprocessing steps
+  steps:
+    - cleaning
+    - normalization
+    - cutout_creation
+
+  # Preprocessing parameters
+  params:
+    cleaning:
+      remove_bad_pixels: true
+      mask_defects: true
+
+    normalization:
+      method: "asinh"           # Options: minmax, zscore, asinh
+      scale_factor: 1.0
+
+    cutout_creation:
+      padding: 10               # pixels padding around cutouts
+      ensure_square: true
+
+# Model configuration for machine learning integration
+model:
+  operation: "prediction"       # Options: training, evaluation, prediction
+  type: "resnet50"            # DeepLense model architecture
+  path: "/path/to/deeplense/model.pth"
+  device: "cuda"              # Options: cuda, cpu
+  batch_size: 8
+  confidence_threshold: 0.5
+
+# Output configuration
+output:
+  format: "csv"               # Options: csv, parquet, fits
+  directory: "./results/rsp_dp0"
+  save_cutouts: true
+  save_metadata: true
+  filename_prefix: "ripple_rsp_dp0"
+
+# Logging configuration
+logging:
+  level: "INFO"                # Options: DEBUG, INFO, WARNING, ERROR
+  file: "./logs/rsp_pipeline.log"
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Advanced settings
+advanced:
+  memory_limit: "8GB"         # Memory limit for processing
+  use_multiprocessing: true
+  chunk_size: 100             # Process data in chunks
+  parallel_downloads: 2      # Parallel downloads from RSP
+
+  # RSP-specific settings
+  rsp:
+    endpoint: "https://data.lsst.cloud/api/tap/"
+    timeout: 300              # Extended timeout for TAP queries
+    max_concurrent_requests: 5

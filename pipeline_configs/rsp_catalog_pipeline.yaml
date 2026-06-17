@@ -1,0 +1,135 @@
+# RIPPLe Pipeline Configuration for RSP Catalog-Only Analysis
+# This configuration focuses on catalog access via RSP TAP service with minimal image processing
+
+data_source:
+  type: butler_server
+  data_release: dp02
+  server_url: "https://data.lsst.cloud/"
+  auth_method: "token"
+  token_username: "x-oauth-basic"
+  # Token will be loaded from RSP_ACCESS_TOKEN environment variable
+  collections:
+    - "2.2i/runs/DP0.2"
+    - "2.2i/runs/DP0.3"
+  create_if_missing: false
+  # PyVO/TAP configuration for RSP external access
+  tap_url: "https://data.lsst.cloud/api/tap"
+  sia_url: "https://data.lsst.cloud/api/dp02/query"  # Default to DP0.2 for catalog queries
+
+instrument:
+  name: LSSTCam
+  class_name: lsst.obs.lsst.LsstCam
+  filters:
+    - u
+    - g
+    - r
+    - i
+    - z
+    - y
+
+# Minimal ingestion for catalog-only workflow
+ingestion:
+  raw_data_pattern: ""
+  transfer_mode: direct
+  define_visits: false
+  write_curated_calibrations: false
+  skip_existing: true
+  processes: 1
+
+# Butler configuration optimized for catalog access
+butler:
+  standalone: false
+  override: false
+  registry_db: remote
+
+# Processing configuration for catalog analysis
+processing:
+  cutout_size: 32               # Small cutouts for catalog cross-reference
+  batch_size: 64               # Large batches for catalog processing
+  max_workers: 8               # More workers for catalog operations
+  cache_size: 10000            # Large cache for catalog data
+  enable_performance_monitoring: true
+  timeout: 60.0                # Shorter timeout for catalog operations
+  retry_attempts: 2
+
+  # Catalog-focused processing steps
+  steps:
+    - catalog_query
+    - crossmatching
+    - feature_extraction
+    - quality_filtering
+
+  # Processing parameters for catalog work
+  params:
+    catalog_query:
+      magnitude_limit: 25.0
+      primary_only: true
+      good_flags_only: true
+
+    crossmatching:
+      radius_arcsec: 2.0
+      require_counterpart: false
+
+    feature_extraction:
+      extract_morphology: true
+      extract_photometry: true
+      extract_astrometry: true
+
+    quality_filtering:
+      min_snr: 3.0
+      max_extendedness: 0.99
+      clean_photometry: true
+
+# Model configuration for catalog-based ML
+model:
+  operation: "prediction"       # Classification/regression on catalog features
+  type: "random_forest"        # Good for tabular data
+  # path: "/path/to/catalog_model.pkl"  # Pickle file for sklearn model
+  device: "cpu"                # CPU is fine for catalog work
+  batch_size: 1000
+  confidence_threshold: 0.6
+
+# Output configuration for catalog results
+output:
+  format: "parquet"            # Parquet for tabular data
+  directory: "./results/rsp_catalog"
+  save_cutouts: false          # Don't save images for catalog-only workflow
+  save_metadata: true
+  save_features: true
+  filename_prefix: "ripple_rsp_catalog"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  file: "./logs/rsp_catalog_pipeline.log"
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Advanced settings for catalog processing
+advanced:
+  memory_limit: "4GB"         # Less memory needed for catalog work
+  use_multiprocessing: true
+  chunk_size: 5000             # Large chunks for catalog operations
+  parallel_downloads: 5
+
+  # RSP TAP service configuration
+  rsp:
+    tap_endpoint: "https://data.lsst.cloud/api/tap/"
+    adql_enabled: true
+    max_rows_per_query: 100000
+    timeout: 300
+    use_async_queries: true
+
+  # Catalog-specific settings
+  catalog:
+    use_object_table: true
+    use_source_table: false
+    include_forced_photometry: true
+    include_psf_photometry: true
+    include_cmodel_photometry: true
+
+  # Performance optimizations
+  optimization:
+    use_indexed_queries: true
+    cache_frequent_queries: true
+    batch_size_adaptive: true

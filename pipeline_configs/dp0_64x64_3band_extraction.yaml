@@ -1,0 +1,162 @@
+# RIPPLe Pipeline Configuration for 64x64 3-band Image Extraction
+# This configuration extracts 64x64 pixel, 3-band images from RSP DP0.2 data
+# Perfect for lens classification model training data preparation
+
+data_source:
+  type: butler_server
+  data_release: dp02
+  server_url: "https://data.lsst.cloud/api/tap"
+  data_repo: "dp02"
+  auth_method: "token"
+  token_username: "x-oauth-basic"
+  # Token will be loaded from RSP_ACCESS_TOKEN environment variable
+  collections:
+    - "2.2i/runs/DP0.2"
+  create_if_missing: false
+  tap_url: "https://data.lsst.cloud/api/tap"
+  sia_url: "https://data.lsst.cloud/api/dp02/query"
+
+  # Coordinate-based extraction configuration
+  extraction:
+    # Specify coordinates for extraction or leave empty for batch processing
+    coordinates:
+      # Example coordinates in DP1 coverage area (from debug output)
+      - ra: 106.68
+        dec: -10.36
+        label: "candidate_001"
+      - ra: 106.58
+        dec: -10.58
+        label: "candidate_002"
+
+    # For batch coordinate processing, specify coordinate file
+    coordinate_file: ""  # Path to CSV/JSON file with coordinates
+
+    # Multi-band configuration
+    bands:
+      - g    # Green band
+      - r    # Red band
+      - i    # Near-infrared band
+
+instrument:
+  name: LSSTCam
+  class_name: lsst.obs.lsst.LsstCam
+  filters:
+    - g
+    - r
+    - i
+
+# No ingestion needed for RSP remote access
+ingestion:
+  raw_data_pattern: ""
+  transfer_mode: direct
+  define_visits: false
+  write_curated_calibrations: false
+  skip_existing: true
+  processes: 1
+
+butler:
+  standalone: false
+  override: false
+  registry_db: remote
+
+# Processing configuration optimized for 64x64 3-band extraction
+processing:
+  cutout_size: 64               # EXACT: 64 pixels as requested
+  batch_size: 32               # Larger batches for efficient processing
+  max_workers: 4               # More workers for faster extraction
+  cache_size: 5000             # Cache for remote data
+  enable_performance_monitoring: true
+  timeout: 120.0
+  retry_attempts: 3
+
+  # Multi-band preprocessing pipeline
+  steps:
+    - cutout_creation           # ONLY: Extract 64x64 cutouts
+
+  # Preprocessing parameters optimized for ML training
+  params:
+    cutout_creation:
+      # 64 pixels * 0.2 arcsec/pixel = 12.8 arcseconds
+      size_arcsec: 12.8        # Cutout size in arcseconds
+      bands: ["g", "r", "i"]     # 3-band configuration
+      coordinate_system: "icrs"     # Standard coordinate system
+
+    cleaning:
+      remove_bad_pixels: true
+      mask_defects: true
+      apply_mask: true
+      mask_planes:
+        - "SAT"    # Saturated pixels
+        - "DETECT"  # Detection artifacts
+        - "BAD"     # Bad pixels
+
+    band_normalization:
+      method: "asinh"           # Good for astronomical data
+      scale_factor: 1.0
+      normalize_bands: true       # Normalize each band separately
+
+    rgb_composite:
+      # Map LSST bands to RGB channels
+      mapping:
+        R: "r"     # Red channel
+        G: "g"     # Green channel
+        B: "i"     # Near-infrared for blue channel
+      # RGB creation parameters
+      stretch_method: "asinh"
+      clip_percentiles: [1, 99]  # Clip outliers
+
+# No model processing - focus on data extraction
+model:
+  operation: "skip"              # Skip model operations for pure extraction
+  type: "none"
+
+# Output configuration for ML training data
+output:
+  format: "numpy"              # Save as numpy arrays for ML
+  directory: "/mnt/HDD2/dhruv"
+  save_cutouts: true
+  save_metadata: true
+  save_rgb_composites: true      # Save RGB composites
+  save_individual_bands: true     # Save g, r, i bands separately
+  filename_prefix: "lsst_64x64_3band"
+
+  # Output file structure
+  output_structure:
+    root_dir: "/mnt/HDD2/dhruv"
+    subdirs:
+      - "g_band"
+      - "r_band"
+      - "i_band"
+      - "rgb_composites"
+      - "metadata"
+
+  # Metadata to save with each cutout
+  metadata_fields:
+    - coordinates
+    - bands
+    - exposure_time
+    - seeing
+    - airmass
+    - mjd
+    - visit
+
+# Logging configuration
+logging:
+  level: "INFO"
+  file: "./logs/64x64_extraction.log"
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Advanced settings for large-scale extraction
+advanced:
+  memory_limit: "8GB"
+  use_multiprocessing: true
+  chunk_size: 50              # Process coordinates in chunks
+  parallel_downloads: 4
+
+  # RSP-specific optimization
+  rsp:
+    endpoint: "https://data.lsst.cloud/api/tap/"
+    timeout: 300
+    max_concurrent_requests: 8
+    connection_pool_size: 8

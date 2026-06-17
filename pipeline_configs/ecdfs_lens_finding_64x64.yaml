@@ -1,0 +1,227 @@
+# RIPPLe Pipeline Configuration for ECDFS Lens Finding Data Extraction
+# This configuration extracts 64x64 pixel, 3-band images from DP1 ECDFS field
+# Optimized for gravitational lens classification model training data
+
+data_source:
+  type: butler_server
+  data_release: dp1
+  server_url: "https://data.lsst.cloud/api/tap"
+  data_repo: "dp1"
+  auth_method: "token"
+  token_username: "x-oauth-basic"
+  # Token will be loaded from RSP_ACCESS_TOKEN environment variable
+  collections:
+    - "2.2i/runs/DP1"
+  create_if_missing: false
+  tap_url: "https://data.lsst.cloud/api/tap"
+  sia_url: "https://data.lsst.cloud/api/dp1/query"
+
+  # ECDFS field configuration for lens finding
+  extraction:
+    # ECDFS field specifications (deepest DP1 field)
+    field:
+      name: "ECDFS"
+      center_ra: 53.13     # ECDFS field center (degrees)
+      center_dec: -28.10   # ECDFS field center (degrees)
+      radius: 0.3          # Search radius in degrees (~18 arcmin)
+      description: "Extended Chandra Deep Field South - Deepest DP1 field with 257 r-band, 177 i-band exposures"
+
+    # Grid sampling coordinates for comprehensive lens finding training data
+    coordinates:
+      # High-confidence central region - deepest coverage
+      - ra: 53.130
+        dec: -28.100
+        label: "ECDFS_deep_center_001"
+      - ra: 53.125
+        dec: -28.095
+        label: "ECDFS_deep_center_002"
+      - ra: 53.135
+        dec: -28.095
+        label: "ECDFS_deep_center_003"
+      - ra: 53.125
+        dec: -28.105
+        label: "ECDFS_deep_center_004"
+      - ra: 53.135
+        dec: -28.105
+        label: "ECDFS_deep_center_005"
+
+      # Extended grid pattern for diverse training examples
+      - ra: 53.110
+        dec: -28.090
+        label: "ECDFS_grid_NW_001"
+      - ra: 53.150
+        dec: -28.090
+        label: "ECDFS_grid_NE_001"
+      - ra: 53.110
+        dec: -28.110
+        label: "ECDFS_grid_SW_001"
+      - ra: 53.150
+        dec: -28.110
+        label: "ECDFS_grid_SE_001"
+
+      # Intermediate radius for more variety
+      - ra: 53.100
+        dec: -28.080
+        label: "ECDFS_mid_001"
+      - ra: 53.160
+        dec: -28.080
+        label: "ECDFS_mid_002"
+      - ra: 53.100
+        dec: -28.120
+        label: "ECDFS_mid_003"
+      - ra: 53.160
+        dec: -28.120
+        label: "ECDFS_mid_004"
+
+      # Outer regions for negative examples
+      - ra: 53.085
+        dec: -28.065
+        label: "ECDFS_outer_001"
+      - ra: 53.175
+        dec: -28.065
+        label: "ECDFS_outer_002"
+      - ra: 53.085
+        dec: -28.135
+        label: "ECDFS_outer_003"
+      - ra: 53.175
+        dec: -28.135
+        label: "ECDFS_outer_004"
+
+    # Optional: Coordinate file for batch processing
+    coordinate_file: ""  # Path to CSV/JSON file with additional coordinates
+
+    # Multi-band configuration optimized for lens finding
+    bands:
+      - g    # Green band (230 exposures in ECDFS) - Good for blue arcs
+      - r    # Red band (257 exposures in ECDFS) - DEEPEST, main lens detection
+      - i    # Near-infrared band (177 exposures in ECDFS) - Good for red lens galaxies
+
+instrument:
+  name: LSSTComCam
+  class_name: lsst.obs.lsst.LsstComCam
+  filters:
+    - g
+    - r
+    - i
+
+# No ingestion needed for RSP remote access
+ingestion:
+  raw_data_pattern: ""
+  transfer_mode: direct
+  define_visits: false
+  write_curated_calibrations: false
+  skip_existing: true
+  processes: 1
+
+butler:
+  standalone: false
+  override: false
+  registry_db: remote
+
+# Processing configuration optimized for lens finding data extraction
+processing:
+  cutout_size: 64               # EXACT: 64 pixels as requested
+  batch_size: 16               # Smaller batches for quality control
+  max_workers: 2               # Conservative for DP1 stability
+  cache_size: 2000             # Cache for ECDFS field data
+  enable_performance_monitoring: true
+  timeout: 180.0               # Longer timeout for DP1 processing
+  retry_attempts: 5            # More retries for commissioning data
+
+  # Lens finding specific preprocessing pipeline
+  steps:
+    - cutout_creation           # Extract 64x64 cutouts from all bands
+    - cleaning                  # Remove artifacts for clean training data
+
+  # Preprocessing parameters optimized for gravitational lens detection
+  params:
+    cutout_creation:
+      # 64 pixels * 0.2 arcsec/pixel = 12.8 arcseconds
+      size_arcsec: 12.8        # Cutout size in arcseconds
+      bands: ["g", "r", "i"]   # 3-band configuration for lens finding
+      coordinate_system: "icrs"
+      ensure_coverage: true    # Ensure all 3 bands available
+      quality_threshold: 0.7   # Minimum data quality score
+
+    cleaning:
+      remove_bad_pixels: true
+      mask_defects: true
+      apply_mask: true
+      mask_planes:
+        - "SAT"      # Saturated pixels (common in bright galaxy centers)
+        - "DETECT"   # Detection artifacts
+        - "BAD"      # Bad pixels
+        - "CR"       # Cosmic rays
+        - "EDGE"     # Sensor edge artifacts
+
+    # Optional band normalization for ML training
+    band_normalization:
+      enabled: false           # Keep raw fluxes for initial training
+      method: "asinh"           # Good for astronomical data if enabled
+      scale_factor: 1.0
+
+# No model processing - focus on data extraction
+model:
+  operation: "skip"
+  type: "none"
+
+# Output configuration for lens finding training data
+output:
+  format: "numpy"              # Save as numpy arrays for ML
+  directory: "/mnt/HDD2/dhruv/ECDFS_lens_finding"
+  save_cutouts: true
+  save_metadata: true
+  save_rgb_composites: false    # Disable RGB for pure numerical training
+  save_individual_bands: true   # Save g, r, i bands separately for 3-band arrays
+  filename_prefix: "ECDFS_64x64_3band_lens"
+
+  # Output file structure for lens finding dataset
+  output_structure:
+    root_dir: "/mnt/HDD2/dhruv/ECDFS_lens_finding"
+    subdirs:
+      - "cutouts"           # 64x64x3 numpy arrays
+      - "individual_bands"  # Separate g, r, i bands
+      - "metadata"          # Observation metadata
+      - "quality_reports"   # Data quality metrics
+
+  # Metadata essential for lens finding training
+  metadata_fields:
+    - coordinates
+    - bands
+    - exposure_time
+    - seeing_fwhm
+    - airmass
+    - mjd
+    - visit
+    - band_depths         # Specific to ECDFS: g=230, r=257, i=177 exposures
+    - psf_fwhm
+    - sky_brightness
+    - zero_point
+
+# Logging configuration for ECDFS extraction
+logging:
+  level: "INFO"
+  file: "./logs/ECDFS_lens_finding_extraction.log"
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Advanced settings for ECDFS lens finding data extraction
+advanced:
+  memory_limit: "6GB"
+  use_multiprocessing: true
+  chunk_size: 5               # Small chunks for quality control
+  parallel_downloads: 2
+
+  # RSP-DP1 specific optimization
+  rsp:
+    endpoint: "https://data.lsst.cloud/api/tap/"
+    timeout: 300
+    max_concurrent_requests: 4  # Conservative for commissioning data
+    connection_pool_size: 4
+
+  # Quality control for lens finding data
+  quality_control:
+    min_snr: 10.0              # Minimum signal-to-noise ratio
+    max_seeing: 1.5            # Maximum seeing FWHM (arcseconds)
+    check_band_coverage: true   # Ensure all 3 bands available
+    verify_coordinates: true   # Validate cutout positions

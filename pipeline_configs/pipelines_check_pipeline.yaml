@@ -1,0 +1,41 @@
+# RIPPLe Configuration for pipelines_check-29.1.1 test data
+
+# --- Butler Configuration ---
+butler: {}
+
+# --- Data Source Configuration ---
+data_source:
+  type: "butler_repo"
+  data_release: dp02
+  path: "data/pipelines_check-29.1.1"
+  collections:
+    - "refcats" # This might need adjustment based on actual content
+
+# --- Instrument Configuration ---
+instrument:
+  name: "HSC"
+  class_name: "lsst.obs.subaru.HyperSuprimeCam"
+
+# --- Data Access Configuration ---
+data_access:
+  cache_path: ".ripple_cache"
+  clear_cache: true # Good practice for test runs
+
+# --- Preprocessing Configuration ---
+preprocessing:
+  steps:
+    - name: "cutout_creator"
+      params:
+        cutout_size: 64
+    - name: "image_normalizer"
+      params:
+        norm_type: "min_max"
+
+# --- Model Configuration ---
+model:
+  name: "base_model"
+  params:
+    learning_rate: 0.01
+  trainer:
+    epochs: 5
+    batch_size: 16

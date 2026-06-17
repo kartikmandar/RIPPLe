@@ -1,0 +1,126 @@
+# RIPPLe Pipeline Configuration for Rubin Science Platform (RSP) DP1 Data
+# This configuration connects to the remote RSP Butler repository using token authentication
+# Designed for DP1 (Data Preview 1) with ComCam data
+
+data_source:
+  type: butler_server
+  data_release: dp1
+  server_url: "https://data.lsst.cloud/"
+  auth_method: "token"
+  token_username: "x-oauth-basic"
+  # Token will be loaded from RSP_ACCESS_TOKEN environment variable
+  collections:
+    - "2.2i/runs/DP1"
+  create_if_missing: false
+  # PyVO/TAP configuration for RSP external access
+  tap_url: "https://data.lsst.cloud/api/tap"
+  sia_url: "https://data.lsst.cloud/api/dp1/query"
+
+instrument:
+  name: "LSSTComCam"
+  class_name: lsst.obs.lsst.LsstComCam
+  filters:
+    - u
+    - g
+    - r
+    - i
+    - z
+    - y
+
+# Ingestion is not needed for RSP remote access
+ingestion:
+  raw_data_pattern: ""
+  transfer_mode: direct
+  define_visits: false
+  write_curibrated_calibrations: false
+  skip_existing: true
+  processes: 1
+
+# Butler configuration for remote access
+butler:
+  standalone: false
+  override: false
+  registry_db: remote
+
+# Processing configuration optimized for DP1 ComCam data
+processing:
+  cutout_size: 64               # pixels (smaller for ComCam)
+  batch_size: 32               # Medium batches for DP1
+  max_workers: 4               # Standard worker count
+  cache_size: 8000             # Larger cache for DP1
+  enable_performance_monitoring: true
+  timeout: 180.0               # Extended timeout for DP1 data
+  retry_attempts: 3
+
+  # Preprocessing steps for DP1
+  steps:
+    - cleaning
+    - normalization
+    - cutout_creation
+    - quality_control
+
+  # Preprocessing parameters
+  params:
+    cleaning:
+      remove_bad_pixels: true
+      mask_defects: true
+      apply_saturation_mask: true
+
+    normalization:
+      method: "asinh"           # Best for astronomical data
+      scale_factor: 1.0
+      offset: 0.0
+
+    cutout_creation:
+      padding: 5                # pixels padding
+      ensure_square: true
+      background_subtraction: true
+
+    quality_control:
+      min_snr: 5.0
+      max_saturation_fraction: 0.1
+
+# Model configuration for DP1 analysis
+model:
+  operation: "prediction"       # Primary operation for DP1
+  type: "resnet50"            # DeepLense model
+  path: "/path/to/deeplense/dp1_model.pth"
+  device: "cuda"              # Use GPU when available
+  batch_size: 16
+  confidence_threshold: 0.7    # Higher threshold for DP1
+
+# Output configuration
+output:
+  format: "parquet"            # Parquet for better performance
+  directory: "./results/rsp_dp1"
+  save_cutouts: true
+  save_metadata: true
+  save_quality_metrics: true
+  filename_prefix: "ripple_rsp_dp1"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  file: "./logs/rsp_dp1_pipeline.log"
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Advanced settings for DP1
+advanced:
+  memory_limit: "12GB"        # Increased memory for DP1
+  use_multiprocessing: true
+  chunk_size: 200             # Larger chunks for DP1
+  parallel_downloads: 3
+
+  # RSP-specific settings for DP1
+  rsp:
+    endpoint: "https://data.lsst.cloud/api/tap/"
+    timeout: 600              # Longer timeout for DP1 queries
+    max_concurrent_requests: 8
+    use_adql_queries: true     # Leverage ADQL for DP1
+
+  # DP1-specific optimizations
+  dp1:
+    tract_filter: [3813, 3814, 3815, 3816]  # Limit to specific tracts
+    patch_filter: ["0,0", "0,1", "1,0", "1,1"]  # Common patches
+    quality_bands: ["r", "i"]  # Bands for quality assessment

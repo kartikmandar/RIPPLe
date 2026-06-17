@@ -1,0 +1,35 @@
+data_source:
+  type: data_folder
+  data_release: dp02
+  path: ./data
+  collections:
+  - raw/all
+  - calib
+  - refcats
+  create_if_missing: true
+instrument:
+  name: HSC
+  class_name: lsst.obs.subaru.HyperSuprimeCam
+  filters:
+  - g
+  - r
+  - i
+  - z
+  - y
+ingestion:
+  raw_data_pattern: '**/*.fits'
+  transfer_mode: symlink
+  define_visits: true
+  write_curated_calibrations: true
+  skip_existing: true
+  processes: 1
+butler:
+  standalone: false
+  override: false
+  registry_db: sqlite
+processing:
+  cutout_size: 64
+  batch_size: 32
+  max_workers: 4
+  cache_size: 1000
+  enable_performance_monitoring: true

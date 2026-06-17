@@ -1,0 +1,203 @@
+# RIPPLe Pipeline Configuration for Automatic DP1 64x64 Extraction
+# This configuration uses the pipeline's built-in coordinate generation
+# to extract ALL possible 64x64 .npy images from DP1 automatically
+
+data_source:
+  type: butler_server
+  data_release: dp1
+  server_url: "https://data.lsst.cloud/api/tap"
+  data_repo: "dp1"
+  auth_method: "token"
+  token_username: "x-oauth-basic"
+  # Token will be loaded from RSP_ACCESS_TOKEN environment variable
+  collections:
+    - "2.2i/runs/DP1"
+  create_if_missing: false
+  tap_url: "https://data.lsst.cloud/api/tap"
+  sia_url: "https://data.lsst.cloud/api/dp1/query"
+
+  # Automatic coordinate generation for all DP1 fields
+  extraction:
+    # Enable automatic coordinate discovery
+    auto_discover:
+      enabled: true
+      strategy: "grid_coverage"
+
+    # All 7 DP1 fields with their specifications
+    fields:
+      - name: "ECDFS"
+        center_ra: 53.13
+        center_dec: -28.10
+        radius: 0.25
+        description: "Extended Chandra Deep Field South - Deepest DP1 field"
+
+      - name: "EDFS"
+        center_ra: 59.10
+        center_dec: -48.73
+        radius: 0.25
+        description: "Euclid Deep Field South"
+
+      - name: "47Tuc"
+        center_ra: 6.02
+        center_dec: -72.08
+        radius: 0.15
+        description: "47 Tuc Globular Cluster"
+
+      - name: "Fornax"
+        center_ra: 40.00
+        center_dec: -34.45
+        radius: 0.20
+        description: "Fornax Dwarf Galaxy"
+
+      - name: "Rubin_SV_38_7"
+        center_ra: 37.86
+        center_dec: 6.98
+        radius: 0.20
+        description: "Low Ecliptic Latitude Field"
+
+      - name: "Rubin_SV_95_25"
+        center_ra: 95.00
+        center_dec: -25.00
+        radius: 0.20
+        description: "Low Galactic Latitude Field"
+
+      - name: "Seagull"
+        center_ra: 106.23
+        center_dec: -10.51
+        radius: 0.20
+        description: "Seagull Nebula"
+
+    # Grid sampling parameters for comprehensive coverage
+    grid_sampling:
+      spacing_arcmin: 0.5        # 0.5 arcminutes between grid points (denser sampling)
+      max_points_per_field: 10000 # No practical limit per field
+
+    # No manual coordinates needed - pipeline will auto-generate
+    coordinates: []
+
+    # Extract all available bands in each field
+    bands:
+      - g    # Green band
+      - r    # Red band
+      - i    # Near-infrared band
+
+instrument:
+  name: LSSTComCam
+  class_name: lsst.obs.lsst.LsstComCam
+  filters:
+    - g
+    - r
+    - i
+
+# No ingestion needed for RSP remote access
+ingestion:
+  raw_data_pattern: ""
+  transfer_mode: direct
+  define_visits: false
+  write_curated_calibrations: false
+  skip_existing: true
+  processes: 1
+
+butler:
+  standalone: false
+  override: false
+  registry_db: remote
+
+# Processing configuration for complete DP1 extraction
+processing:
+  cutout_size: 64               # 64x64 pixels
+  batch_size: 16               # Smaller batches for quality control
+  max_workers: 2               # Conservative for DP1 stability
+  cache_size: 2000             # Cache for DP1 field data
+  enable_performance_monitoring: true
+  timeout: 180.0               # Longer timeout for DP1 processing
+  retry_attempts: 3            # More retries for commissioning data
+
+  # Simple extraction pipeline - no complex preprocessing
+  steps:
+    - cutout_creation           # JUST extract 64x64 cutouts
+
+  params:
+    cutout_creation:
+      size_arcsec: 12.8        # 64 pixels * 0.2 arcsec/pixel
+      bands: ["g", "r", "i"]   # 3-band extraction
+      coordinate_system: "icrs"
+      ensure_coverage: true    # Ensure all 3 bands available
+      quality_threshold: 0.7   # Minimum data quality score
+
+    cleaning:
+      remove_bad_pixels: true
+      mask_defects: true
+      apply_mask: true
+      mask_planes:
+        - "SAT"      # Saturated pixels
+        - "DETECT"   # Detection artifacts
+        - "BAD"      # Bad pixels
+        - "CR"       # Cosmic rays
+        - "EDGE"     # Sensor edge artifacts
+
+# No model processing
+model:
+  operation: "skip"
+  type: "none"
+
+# Output configuration for complete DP1 dataset
+output:
+  format: "numpy"              # Save as .npy files
+  directory: "/mnt/HDD2/dhruv/DP1_auto_64x64"
+  save_cutouts: true
+  save_metadata: true
+  save_rgb_composites: false    # Skip RGB - just need raw arrays
+  save_individual_bands: true   # Save g, r, i bands separately
+  filename_prefix: "DP1_64x64"
+
+  # Organized output structure
+  output_structure:
+    root_dir: "/mnt/HDD2/dhruv/DP1_auto_64x64"
+    subdirs:
+      - "ECDFS"
+      - "EDFS"
+      - "47Tuc"
+      - "Fornax"
+      - "Rubin_SV_38_7"
+      - "Rubin_SV_95_25"
+      - "Seagull"
+      - "metadata"
+      - "logs"
+
+  # Save essential metadata
+  metadata_fields:
+    - coordinates
+    - field_name
+    - bands
+    - visit
+    - mjd
+    - seeing_fwhm
+    - airmass
+
+# Logging configuration
+logging:
+  level: "INFO"
+  file: "./logs/DP1_auto_extraction.log"
+  console: true
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Advanced settings for large-scale DP1 extraction
+advanced:
+  memory_limit: "8GB"
+  use_multiprocessing: true
+  chunk_size: 20              # Process 20 coordinates at a time
+  parallel_downloads: 4
+
+  # RSP-DP1 optimization
+  rsp:
+    endpoint: "https://data.lsst.cloud/api/tap/"
+    timeout: 600              # Longer timeout for large datasets
+    max_concurrent_requests: 8
+    connection_pool_size: 8
+
+  # No extraction limits - get all available data
+  extraction_limits:
+    max_total_cutouts: 999999   # No practical limit
+    max_per_field: 99999        # No practical limit per field
+    skip_existing: true         # Skip existing files but don't limit new ones
