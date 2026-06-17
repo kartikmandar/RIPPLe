@@ -117,3 +117,6 @@ venv.save/
 # Config yaml files
 *.yaml
 
+# AI research/reference knowledge base (kept locally, not tracked)
+AI_DOCS/
+
