@@ -19,7 +19,11 @@ class ButlerConfig:
     # Data configuration
     collections: List[str] = field(default_factory=list)
     instrument: Optional[str] = None
-    
+
+    # Data-release-aware dataset naming
+    data_release: str = "dp1"             # 'dp1' (default) or 'dp02' (legacy)
+    dataset_types: Optional[dict] = None  # per-logical-key concrete-name overrides
+
     # Performance configuration
     cache_size: int = 1000
     timeout: float = 30.0

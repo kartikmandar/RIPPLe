@@ -10,6 +10,7 @@ from lsst.geom import Box2I, Point2I, Extent2I, SpherePoint, degrees
 
 from ripple.data_access.exceptions import InvalidRepositoryError
 from ripple.data_access.config_examples import ButlerConfig
+from ripple.data_access.dataset_names import resolve_dataset_type
 
 class ButlerClient:
     """
@@ -22,7 +23,7 @@ class ButlerClient:
     def __init__(self, repo_path: str = None, server_url: str = None,
                  collection: str = None, collections: List[str] = None,
                  access_token: str = None, auth_method: str = "none",
-                 config: ButlerConfig = None):
+                 config: ButlerConfig = None, data_release: str = None):
         """
         Initializes the ButlerClient.
 
@@ -48,11 +49,29 @@ class ButlerClient:
                 auth_method=auth_method
             )
 
+        # Resolve data-release-aware dataset naming
+        self.data_release = (data_release
+                             or getattr(self.config, "data_release", None)
+                             or "dp1")
+        self.dataset_types = getattr(self.config, "dataset_types", None)
+
         # Validate configuration
         self._validate_config()
 
         # Initialize Butler instance
         self.butler = self._initialize_butler()
+
+    def _dt(self, logical: str) -> str:
+        """Resolve a logical dataset key to the concrete type for this release.
+
+        Args:
+            logical: A logical dataset key (``calexp``/``coadd``/``object``/``src``).
+
+        Returns:
+            The concrete Butler dataset type string for the active data release.
+        """
+        return resolve_dataset_type(logical, release=self.data_release,
+                                    overrides=self.dataset_types)
 
     def _validate_config(self):
         """Validate the Butler configuration."""
@@ -242,20 +261,21 @@ class ButlerClient:
             Optional[Any]: The calexp object, or None if not found.
         """
         data_id = {"visit": visit, "detector": detector}
+        dataset_type = self._dt('calexp')
 
         # Validate DataId first
-        is_valid, result = self._validate_dataid('calexp', data_id)
+        is_valid, result = self._validate_dataid(dataset_type, data_id)
         if not is_valid:
-            logging.error(f"Invalid DataId for calexp: {result}")
+            logging.error(f"Invalid DataId for {dataset_type}: {result}")
             return None
 
         try:
-            return self.butler.get('calexp', dataId=data_id)
+            return self.butler.get(dataset_type, dataId=data_id)
         except DatasetNotFoundError:
-            logging.warning(f"calexp not found for visit={visit}, detector={detector}")
+            logging.warning(f"{dataset_type} not found for visit={visit}, detector={detector}")
             return None
         except Exception as e:
-            logging.error(f"Error retrieving calexp for visit={visit}, detector={detector}: {e}")
+            logging.error(f"Error retrieving {dataset_type} for visit={visit}, detector={detector}: {e}")
             return None
 
     def get_deepCoadd(self, tract: int, patch: int, band: str = None,
@@ -276,27 +296,28 @@ class ButlerClient:
         data_id = {"tract": tract, "patch": patch}
         if band:
             data_id["band"] = band
+        dataset_type = self._dt('coadd')
 
         # Validate DataId first
-        is_valid, result = self._validate_dataid('deepCoadd', data_id)
+        is_valid, result = self._validate_dataid(dataset_type, data_id)
         if not is_valid:
-            logging.error(f"Invalid DataId for deepCoadd: {result}")
+            logging.error(f"Invalid DataId for {dataset_type}: {result}")
             return None
 
         try:
             if use_bbox and bbox:
                 # Use bbox-based retrieval for efficiency
-                return self._get_with_bbox_retry('deepCoadd', data_id, bbox)
+                return self._get_with_bbox_retry(dataset_type, data_id, bbox)
             else:
                 # Standard retrieval
-                return self.butler.get('deepCoadd', dataId=data_id)
+                return self.butler.get(dataset_type, dataId=data_id)
         except DatasetNotFoundError:
             band_str = f", band={band}" if band else ""
-            logging.warning(f"deepCoadd not found for tract={tract}, patch={patch}{band_str}")
+            logging.warning(f"{dataset_type} not found for tract={tract}, patch={patch}{band_str}")
             return None
         except Exception as e:
             band_str = f", band={band}" if band else ""
-            logging.error(f"Error retrieving deepCoadd for tract={tract}, patch={patch}{band_str}: {e}")
+            logging.error(f"Error retrieving {dataset_type} for tract={tract}, patch={patch}{band_str}: {e}")
             return None
 
     def get_source_catalog(self, visit: int, detector: int) -> Optional[Any]:
@@ -311,20 +332,21 @@ class ButlerClient:
             Optional[Any]: The source catalog object, or None if not found.
         """
         data_id = {"visit": visit, "detector": detector}
+        dataset_type = self._dt('src')
 
         # Validate DataId first
-        is_valid, result = self._validate_dataid('sourceTable', data_id)
+        is_valid, result = self._validate_dataid(dataset_type, data_id)
         if not is_valid:
-            logging.error(f"Invalid DataId for sourceTable: {result}")
+            logging.error(f"Invalid DataId for {dataset_type}: {result}")
             return None
 
         try:
-            return self.butler.get('sourceTable', dataId=data_id)
+            return self.butler.get(dataset_type, dataId=data_id)
         except DatasetNotFoundError:
-            logging.warning(f"sourceTable not found for visit={visit}, detector={detector}")
+            logging.warning(f"{dataset_type} not found for visit={visit}, detector={detector}")
             return None
         except Exception as e:
-            logging.error(f"Error retrieving sourceTable for visit={visit}, detector={detector}: {e}")
+            logging.error(f"Error retrieving {dataset_type} for visit={visit}, detector={detector}: {e}")
             return None
 
     def get_object_catalog(self, tract: int, patch: int, band: str = None) -> Optional[Any]:
@@ -342,22 +364,23 @@ class ButlerClient:
         data_id = {"tract": tract, "patch": patch}
         if band:
             data_id["band"] = band
+        dataset_type = self._dt('object')
 
         # Validate DataId first
-        is_valid, result = self._validate_dataid('objectTable', data_id)
+        is_valid, result = self._validate_dataid(dataset_type, data_id)
         if not is_valid:
-            logging.error(f"Invalid DataId for objectTable: {result}")
+            logging.error(f"Invalid DataId for {dataset_type}: {result}")
             return None
 
         try:
-            return self.butler.get('objectTable', dataId=data_id)
+            return self.butler.get(dataset_type, dataId=data_id)
         except DatasetNotFoundError:
             band_str = f", band={band}" if band else ""
-            logging.warning(f"objectTable not found for tract={tract}, patch={patch}{band_str}")
+            logging.warning(f"{dataset_type} not found for tract={tract}, patch={patch}{band_str}")
             return None
         except Exception as e:
             band_str = f", band={band}" if band else ""
-            logging.error(f"Error retrieving objectTable for tract={tract}, patch={patch}{band_str}: {e}")
+            logging.error(f"Error retrieving {dataset_type} for tract={tract}, patch={patch}{band_str}: {e}")
             return None
 
     def query_datasets_by_tract(self, dataset_type: str, tract: int,
@@ -486,6 +509,7 @@ class ButlerClient:
         results = []
 
         def process_single_ref(ref):
+            """Fetch one dataset ref, optionally post-processed by processor_func."""
             try:
                 data = self.butler.get(ref)
                 if processor_func:
@@ -591,14 +615,18 @@ class ButlerClient:
                         return None
 
     def get_cutout(self, ra: float, dec: float, size_arcsec: float = 60.0,
-                    band: str = "i", dataset_type: str = "deepCoadd",
+                    band: str = "i", dataset_type: str = None,
                     skymap: str = None) -> Optional[Any]:
         """
-        Get a cutout from deepCoadd at given coordinates using efficient bbox retrieval.
+        Get a cutout from the coadd at given coordinates using efficient bbox retrieval.
 
         This method demonstrates production-ready coordinate-based cutout retrieval
-        with proper tract/patch resolution and bbox optimization.
+        with proper tract/patch resolution and bbox optimization. When
+        ``dataset_type`` is not given it defaults to the release's coadd type
+        (``deep_coadd`` for DP1, ``deepCoadd`` for DP0.2).
         """
+        if dataset_type is None:
+            dataset_type = self._dt('coadd')
         try:
             # Get skymap for coordinate resolution
             if skymap:

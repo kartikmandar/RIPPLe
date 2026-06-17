@@ -36,6 +36,11 @@ class LsstDataFetcher:
         self.config = config or {}
         self.logger = logging.getLogger(__name__)
 
+        # Data release for release-aware dataset/table naming (default DP1).
+        # config may be the data_source block directly or the full config.
+        _ds = self.config if 'type' in self.config else self.config.get('data_source', {})
+        self.data_release = _ds.get('data_release', 'dp1')
+
         # Initialize data clients
         self.butler_client: Optional[ButlerClient] = None
         self.rsp_tap_client: Optional[RSPTAPClient] = None
@@ -79,7 +84,7 @@ class LsstDataFetcher:
                 raise ValueError("Repository path required for butler_repo type")
 
             # Create Butler configuration
-            butler_config = ButlerConfig(repo_path=repo_path)
+            butler_config = ButlerConfig(repo_path=repo_path, data_release=self.data_release)
 
             # Initialize Butler client
             self.butler_client = ButlerClient(config=butler_config)
@@ -147,7 +152,7 @@ class LsstDataFetcher:
     # High-level data access methods
 
     def get_object_catalog(self, ra: float, dec: float, radius: float = 0.1,
-                          table: str = "dp02_dc2_catalogs.Object",
+                          table: str = None,
                           limit: int = 1000) -> List[Dict]:
         """
         Get object catalog around a sky position.
@@ -165,6 +170,9 @@ class LsstDataFetcher:
         Raises:
             DataAccessError: If data retrieval fails
         """
+        if table is None:
+            table = "dp1.Object" if self.data_release == "dp1" else "dp02_dc2_catalogs.Object"
+
         if not self.rsp_tap_client or not self.rsp_tap_client.tap_service:
             raise DataAccessError("TAP service not available for catalog queries")
 
@@ -572,6 +580,7 @@ class LsstDataFetcher:
         self.logger.info(f"Retrieving {len(coordinates)} cutouts in parallel")
 
         def process_coordinate(coord_tuple):
+            """Fetch a single cutout for one (ra, dec) tuple, returning a result dict."""
             ra, dec = coord_tuple
             try:
                 cutout = self.get_cutout(ra, dec, size_arcsec, band)
