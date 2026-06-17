@@ -9,7 +9,7 @@ import os
 import yaml
 import logging
 from typing import Dict, List, Optional, Any, Union
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -261,39 +261,48 @@ def validate_rsp_configuration(config: RepoConfig) -> None:
 
 
 def get_default_config() -> RepoConfig:
-    """Get default configuration."""
+    """Get default configuration.
+
+    The pipeline-stage configurations (data_source, ingestion, processing,
+    model, output) are stored as flexible dicts to match the RepoConfig schema
+    and the dict-based access used throughout the runtime (e.g.
+    ``config.data_source.get('type')``). Only ``instrument`` and ``butler`` are
+    strongly typed dataclasses.
+    """
     return RepoConfig(
-        data_source=DataSourceConfig(
-            type='data_folder',
-            path='./data',
-            collections=['raw/all', 'calib', 'refcats'],
-            create_if_missing=True
-        ),
         instrument=InstrumentConfig(
             name='HSC',
             class_name='lsst.obs.subaru.HyperSuprimeCam',
             filters=['g', 'r', 'i', 'z', 'y']
-        ),
-        ingestion=IngestionConfig(
-            raw_data_pattern='**/*.fits',
-            transfer_mode='symlink',
-            define_visits=True,
-            write_curated_calibrations=True,
-            skip_existing=True,
-            processes=1
         ),
         butler=ButlerConfig(
             standalone=False,
             override=False,
             registry_db='sqlite'
         ),
-        processing=ProcessingConfig(
-            cutout_size=64,
-            batch_size=32,
-            max_workers=4,
-            cache_size=1000,
-            enable_performance_monitoring=True
-        )
+        data_source={
+            'type': 'data_folder',
+            'path': './data',
+            'collections': ['raw/all', 'calib', 'refcats'],
+            'create_if_missing': True
+        },
+        ingestion={
+            'raw_data_pattern': '**/*.fits',
+            'transfer_mode': 'symlink',
+            'define_visits': True,
+            'write_curated_calibrations': True,
+            'skip_existing': True,
+            'processes': 1
+        },
+        processing={
+            'cutout_size': 64,
+            'batch_size': 32,
+            'max_workers': 4,
+            'cache_size': 1000,
+            'enable_performance_monitoring': True
+        },
+        model={},
+        output={}
     )
 
 
@@ -309,50 +318,20 @@ def save_config(config: RepoConfig, output_path: Union[str, Path]) -> None:
         Output file path
     """
     output_path = Path(output_path)
-    
-    # Convert to dictionary
+
+    # Convert to dictionary. instrument/butler are typed dataclasses; the
+    # remaining pipeline-stage configurations are stored as flexible dicts
+    # (matching RepoConfig.from_dict and the runtime's dict-based access).
     config_dict = {
-        'data_source': {
-            'type': config.data_source.type,
-            'path': config.data_source.path,
-            'server_url': config.data_source.server_url,
-            'collections': config.data_source.collections,
-            'create_if_missing': config.data_source.create_if_missing
-        },
-        'instrument': {
-            'name': config.instrument.name,
-            'class_name': config.instrument.class_name,
-            'filters': config.instrument.filters,
-            'detector_list': config.instrument.detector_list
-        },
-        'ingestion': {
-            'raw_data_pattern': config.ingestion.raw_data_pattern,
-            'calibration_path': config.ingestion.calibration_path,
-            'reference_catalog_path': config.ingestion.reference_catalog_path,
-            'transfer_mode': config.ingestion.transfer_mode,
-            'define_visits': config.ingestion.define_visits,
-            'write_curated_calibrations': config.ingestion.write_curated_calibrations,
-            'skip_existing': config.ingestion.skip_existing,
-            'processes': config.ingestion.processes
-        },
-        'butler': {
-            'dimension_config': config.butler.dimension_config,
-            'seed_config': config.butler.seed_config,
-            'standalone': config.butler.standalone,
-            'override': config.butler.override,
-            'registry_db': config.butler.registry_db,
-            'postgres_url': config.butler.postgres_url
-        },
-        'processing': {
-            'cutout_size': config.processing.cutout_size,
-            'batch_size': config.processing.batch_size,
-            'max_workers': config.processing.max_workers,
-            'cache_size': config.processing.cache_size,
-            'enable_performance_monitoring': config.processing.enable_performance_monitoring,
-            'output_dir': config.processing.output_dir
-        }
+        'instrument': asdict(config.instrument),
+        'butler': asdict(config.butler),
+        'data_source': dict(config.data_source),
+        'ingestion': dict(config.ingestion),
+        'processing': dict(config.processing),
+        'model': dict(config.model),
+        'output': dict(config.output),
     }
-    
+
     # Remove None values
     config_dict = _remove_none_values(config_dict)
     
