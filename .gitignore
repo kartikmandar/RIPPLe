@@ -75,6 +75,9 @@ docs/_build/
 # Sphinx documentation
 docs/generated/
 
+# Superpowers planning artifacts (design specs + implementation plans) - kept local
+docs/superpowers/
+
 # Caches
 .cache/
 
