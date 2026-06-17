@@ -378,6 +378,9 @@ class DataSourceStage(PipelineStage):
                             "rsp_tap_client": self.rsp_tap_client,
                             "client_type": "pyvo_tap"
                         }
+            else:
+                self.logger.error("RSP TAP client not initialized for butler_server source")
+                data = {"status": "error", "message": "RSP TAP client not initialized for butler_server source"}
 
         else:
             self.logger.warning(f"Unsupported data source type: {self.source_type}. Performing no operation.")
