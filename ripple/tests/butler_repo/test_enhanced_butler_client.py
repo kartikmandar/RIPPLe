@@ -4,6 +4,9 @@ Test script for enhanced ButlerClient with RSP token authentication support.
 
 This script demonstrates how to use the enhanced ButlerClient with both local
 repositories and remote Rubin Science Platform access using tokens.
+
+The ``test_*`` functions are pytest tests: they raise on failure (via ``assert``)
+and return ``None`` on success. ``main()`` runs them as a standalone script.
 """
 
 import os
@@ -45,11 +48,9 @@ def test_local_butler():
         # Test validation
         from ripple.data_access.config_examples import validate_config
         validation = validate_config(config)
-        if validation['valid']:
-            logger.info("✓ Local Butler configuration is valid")
-        else:
-            logger.error(f"✗ Local Butler configuration validation failed: {validation['errors']}")
-            return False
+        assert validation['valid'], \
+            f"Local Butler configuration validation failed: {validation['errors']}"
+        logger.info("✓ Local Butler configuration is valid")
 
         # Initialize ButlerClient (this will fail if repo doesn't exist, but tests the interface)
         try:
@@ -61,11 +62,9 @@ def test_local_butler():
             else:
                 raise
 
-        return True
-
     except Exception as e:
         logger.error(f"Local Butler test failed: {e}")
-        return False
+        raise
 
 def test_rsp_config():
     """Test RSP configuration without making actual connection."""
@@ -88,11 +87,9 @@ def test_rsp_config():
 
         # Validate configuration
         validation = validate_config(config)
-        if validation['valid']:
-            logger.info("✓ RSP Butler configuration is valid")
-        else:
-            logger.error(f"✗ RSP Butler configuration validation failed: {validation['errors']}")
-            return False
+        assert validation['valid'], \
+            f"RSP Butler configuration validation failed: {validation['errors']}"
+        logger.info("✓ RSP Butler configuration is valid")
 
         # Test configuration parameters
         assert config.auth_method == "token"
@@ -101,11 +98,10 @@ def test_rsp_config():
         assert config.server_url == "https://data.lsst.cloud/api/butler/"
 
         logger.info("✓ RSP configuration parameters are correct")
-        return True
 
     except Exception as e:
         logger.error(f"RSP configuration test failed: {e}")
-        return False
+        raise
 
 def test_rsp_config_with_env():
     """Test RSP configuration using environment variable."""
@@ -128,8 +124,9 @@ def test_rsp_config_with_env():
 
         except ValueError as e:
             if "RSP_ACCESS_TOKEN environment variable is required" in str(e):
-                logger.error("✗ get_rsp_config() not finding environment variable")
-                return False
+                raise AssertionError(
+                    f"get_rsp_config() not finding environment variable: {e}"
+                )
             else:
                 raise
         finally:
@@ -137,11 +134,9 @@ def test_rsp_config_with_env():
             if "RSP_ACCESS_TOKEN" in os.environ:
                 del os.environ["RSP_ACCESS_TOKEN"]
 
-        return True
-
     except Exception as e:
         logger.error(f"RSP environment variable test failed: {e}")
-        return False
+        raise
 
 def test_butler_client_interface():
     """Test ButlerClient interface with different initialization methods."""
@@ -200,11 +195,9 @@ def test_butler_client_interface():
             # Just validate the configuration, don't actually connect
             from ripple.data_access.config_examples import validate_config
             validation = validate_config(config)
-            if validation['valid']:
-                logger.info("✓ RSP configuration validation passed (no actual connection)")
-            else:
-                logger.error(f"✗ RSP configuration validation failed: {validation['errors']}")
-                return False
+            assert validation['valid'], \
+                f"RSP configuration validation failed: {validation['errors']}"
+            logger.info("✓ RSP configuration validation passed (no actual connection)")
 
         # Test 3: Test backward compatibility (old interface)
         try:
@@ -219,11 +212,9 @@ def test_butler_client_interface():
             else:
                 logger.warning(f"Backward compatibility test: {e}")
 
-        return True
-
     except Exception as e:
         logger.error(f"ButlerClient interface test failed: {e}")
-        return False
+        raise
 
 def test_authentication_validation():
     """Test authentication validation logic."""
@@ -273,11 +264,9 @@ def test_authentication_validation():
         assert validation['valid']
         logger.info("✓ Valid token configuration accepted")
 
-        return True
-
     except Exception as e:
         logger.error(f"Authentication validation test failed: {e}")
-        return False
+        raise
 
 def main():
     """Run all tests."""
@@ -297,10 +286,10 @@ def main():
     for test_name, test_func in tests:
         logger.info(f"\n--- Testing {test_name} ---")
         try:
-            result = test_func()
-            results.append((test_name, result))
-            status = "PASS" if result else "FAIL"
-            logger.info(f"{test_name}: {status}")
+            # pytest-style tests pass by returning None and fail by raising.
+            test_func()
+            results.append((test_name, True))
+            logger.info(f"{test_name}: PASS")
         except Exception as e:
             logger.error(f"{test_name}: FAIL - {e}")
             results.append((test_name, False))

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ripple"
+version = "1.0.0.dev0"
+description = "RIPPLe: Rubin Image Preparation and Processing Lensing engine"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Kartik Mandar", email = "kartik4321mandar@gmail.com" }]
+
+# Runtime dependencies are supplied by the LSST Science Pipelines conda env
+# (rubin-env already provides numpy, scipy, astropy, pyyaml, matplotlib, torch,
+# torchvision, pyvo, pandas, scikit-image, scikit-learn). Kept EMPTY on purpose
+# so `pip install -e .` never mutates / re-solves the stack environment.
+dependencies = []
+
+[project.optional-dependencies]
+# Non-stack pip extras (lsst.rsp is not bundled in lsst_distrib).
+rsp = ["lsst-rsp", "python-dotenv"]
+
+[tool.setuptools.packages.find]
+include = ["ripple*"]
+
+[tool.pytest.ini_options]
+testpaths = ["ripple/tests"]

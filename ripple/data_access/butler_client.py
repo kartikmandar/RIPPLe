@@ -101,24 +101,28 @@ class ButlerClient:
             # Set up authentication environment for Butler
             self._setup_authentication()
 
-            # Try lsst.rsp approach first (recommended for RSP)
-            # Authentication is already set up by _setup_authentication() call above
-            logging.info(f"Attempting to connect to RSP Butler using lsst.rsp module")
+            # Preferred path: connect via the named data-release repository label
+            # (e.g. "dp1"). This works out-of-the-box inside the Rubin Science Platform,
+            # where the label is registered through DAF_BUTLER_REPOSITORY_INDEX, and on a
+            # laptop when that index env var is set.
+            #
+            # NOTE: lsst.rsp.get_butler was REMOVED in lsst-rsp 1.0.0, so we call
+            # lsst.daf.butler.Butler with the repository label directly instead.
+            repo_label = getattr(self.config, "repo_label", None) or "dp1"
+            logging.info(f"Attempting to connect to RSP Butler via repository label '{repo_label}'")
             try:
-                from lsst.rsp import get_butler
-
-                # Use lsst.rsp to get Butler client
-                butler = get_butler(
+                butler = Butler(
+                    repo_label,
                     collections=self.config.collections,
                     run=self.config.collections[0] if self.config.collections else None
                 )
-                logging.info("✓ Connected to RSP Butler using lsst.rsp module")
+                logging.info(f"✓ Connected to RSP Butler using repository label '{repo_label}'")
                 return butler
-
-            except ImportError:
-                logging.warning("lsst.rsp module not available, falling back to direct Butler access")
             except Exception as e1:
-                logging.warning(f"lsst.rsp Butler connection failed: {e1}")
+                logging.warning(
+                    f"Butler('{repo_label}') failed ({e1}); falling back to the direct server URL. "
+                    "For laptop use of a named label, set DAF_BUTLER_REPOSITORY_INDEX to the RSP repo index."
+                )
 
             # Fallback to direct Butler initialization methods
             logging.info(f"Attempting to connect to RSP Butler at: {self.config.server_url}")

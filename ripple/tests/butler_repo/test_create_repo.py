@@ -10,6 +10,7 @@ This module tests the functionality of the create_repo module including:
 
 import unittest
 from unittest.mock import patch, MagicMock
+import subprocess
 import tempfile
 import os
 import shutil
@@ -48,10 +49,11 @@ class TestCreateRepo(unittest.TestCase):
         
         self.assertTrue(result)
         self.assertTrue(self.repo_path.parent.exists())
-        
-        # Verify subprocess was called correctly
-        mock_subprocess.assert_called_once()
-        args, kwargs = mock_subprocess.call_args
+
+        # Verify subprocess was called correctly. The default config registers an
+        # instrument, so a second "register-instrument" call is also expected.
+        create_call = mock_subprocess.call_args_list[0]
+        args, kwargs = create_call
         self.assertEqual(args[0][0], "butler")
         self.assertEqual(args[0][1], "create")
         self.assertIn(str(self.repo_path), args[0])
@@ -86,15 +88,15 @@ class TestCreateRepo(unittest.TestCase):
         self.repo_path.mkdir(parents=True, exist_ok=True)
         (self.repo_path / "butler.yaml").touch()
         
-        # Mock successful subprocess calls
+        # Mock successful subprocess calls. The implementation issues two butler
+        # commands: query-collections, then query-datasets.
         mock_subprocess.side_effect = [
-            MagicMock(returncode=0, stdout="Repository info", stderr=""),  # butler info
             MagicMock(returncode=0, stdout="raw/all\ncalib\nrefcats", stderr=""),  # query-collections
             MagicMock(returncode=0, stdout="Dataset1\nDataset2", stderr="")  # query-datasets
         ]
-        
+
         result = verify_repository(str(self.repo_path))
-        
+
         self.assertTrue(result['valid'])
         self.assertEqual(len(result['errors']), 0)
         self.assertIn('raw_output', result['info'])
@@ -128,18 +130,20 @@ class TestCreateRepo(unittest.TestCase):
         self.repo_path.mkdir(parents=True, exist_ok=True)
         (self.repo_path / "butler.yaml").touch()
         
-        # Mock failed info call but successful collections call
+        # Mock failed collections call but successful datasets call. The
+        # collections query is what now provides repository info / raw_output.
         mock_subprocess.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="Info failed"),  # butler info
-            MagicMock(returncode=0, stdout="raw/all\ncalib", stderr="")  # query-collections
+            MagicMock(returncode=1, stdout="", stderr="Info failed"),  # query-collections
+            MagicMock(returncode=0, stdout="raw/all\ncalib", stderr="")  # query-datasets
         ]
-        
+
         result = verify_repository(str(self.repo_path))
-        
+
         self.assertTrue(result['valid'])
         self.assertEqual(len(result['errors']), 0)
-        self.assertTrue(any("Could not get repository info" in warning for warning in result['warnings']))
-        self.assertIn('collections', result['info'])
+        self.assertTrue(any("Could not query collections" in warning for warning in result['warnings']))
+        # Collections info is absent because the query failed.
+        self.assertNotIn('collections', result['info'])
     
     @patch('subprocess.run')
     def test_verify_repository_collections_failure(self, mock_subprocess):
@@ -148,18 +152,19 @@ class TestCreateRepo(unittest.TestCase):
         self.repo_path.mkdir(parents=True, exist_ok=True)
         (self.repo_path / "butler.yaml").touch()
         
-        # Mock successful info call but failed collections call
+        # Mock failed collections call but successful datasets call.
         mock_subprocess.side_effect = [
-            MagicMock(returncode=0, stdout="Repository info", stderr=""),  # butler info
             MagicMock(returncode=1, stdout="", stderr="Collections failed"),  # query-collections
+            MagicMock(returncode=0, stdout="Dataset1\nDataset2", stderr=""),  # query-datasets
         ]
-        
+
         result = verify_repository(str(self.repo_path))
-        
+
         self.assertTrue(result['valid'])
         self.assertEqual(len(result['errors']), 0)
         self.assertTrue(any("Could not query collections" in warning for warning in result['warnings']))
-        self.assertIn('raw_output', result['info'])
+        # raw_output is only populated when the collections query succeeds.
+        self.assertNotIn('raw_output', result['info'])
     
     @patch('subprocess.run')
     def test_verify_repository_datasets_failure(self, mock_subprocess):
@@ -168,15 +173,14 @@ class TestCreateRepo(unittest.TestCase):
         self.repo_path.mkdir(parents=True, exist_ok=True)
         (self.repo_path / "butler.yaml").touch()
         
-        # Mock successful info and collections calls but failed datasets call
+        # Mock successful collections call but failed datasets call.
         mock_subprocess.side_effect = [
-            MagicMock(returncode=0, stdout="Repository info", stderr=""),  # butler info
             MagicMock(returncode=0, stdout="raw/all\ncalib", stderr=""),  # query-collections
             MagicMock(returncode=1, stdout="", stderr="Datasets failed")  # query-datasets
         ]
-        
+
         result = verify_repository(str(self.repo_path))
-        
+
         self.assertTrue(result['valid'])
         self.assertEqual(len(result['errors']), 0)
         # Check if any warning message contains the expected text
@@ -191,18 +195,17 @@ class TestCreateRepo(unittest.TestCase):
         self.repo_path.mkdir(parents=True, exist_ok=True)
         (self.repo_path / "butler.yaml").touch()
         
-        # Mock successful subprocess calls
+        # The implementation issues a single query-collections command and
+        # returns the parsed collections list.
         mock_subprocess.side_effect = [
-            MagicMock(returncode=0, stdout="Key1: Value1\nKey2: Value2", stderr=""),  # butler info
             MagicMock(returncode=0, stdout="raw/all\ncalib", stderr="")  # query-collections
         ]
-        
+
         result = get_repository_info(str(self.repo_path))
-        
+
         self.assertIsNotNone(result)
-        self.assertEqual(result['key1'], 'Value1')
-        self.assertEqual(result['key2'], 'Value2')
         self.assertEqual(result['collections'], ['raw/all', 'calib'])
+        self.assertEqual(result['collection_count'], 2)
     
     def test_get_repository_info_missing_butler_yaml(self):
         """Test repository info retrieval with missing butler.yaml."""
@@ -217,34 +220,34 @@ class TestCreateRepo(unittest.TestCase):
         self.repo_path.mkdir(parents=True, exist_ok=True)
         (self.repo_path / "butler.yaml").touch()
         
-        # Mock failed subprocess call
-        mock_subprocess.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="Info failed"),  # butler info
-        ]
-        
+        # The implementation runs the command with check=True, so a non-zero
+        # exit raises CalledProcessError, which get_repository_info handles by
+        # returning None.
+        mock_subprocess.side_effect = subprocess.CalledProcessError(
+            returncode=1, cmd=["butler", "query-collections"], stderr="Info failed"
+        )
+
         result = get_repository_info(str(self.repo_path))
-        
+
         self.assertIsNone(result)
     
     @patch('subprocess.run')
-    def test_get_repository_info_collections_failure(self, mock_subprocess):
-        """Test repository info retrieval with collections command failure."""
+    def test_get_repository_info_no_collections(self, mock_subprocess):
+        """Test repository info retrieval when the repository has no collections."""
         # Create butler.yaml to simulate existing repository
         self.repo_path.mkdir(parents=True, exist_ok=True)
         (self.repo_path / "butler.yaml").touch()
-        
-        # Mock successful info call but failed collections call
+
+        # The collections query succeeds but returns no collections; the
+        # implementation returns an info dict without a 'collections' key.
         mock_subprocess.side_effect = [
-            MagicMock(returncode=0, stdout="Key1: Value1\nKey2: Value2", stderr=""),  # butler info
-            MagicMock(returncode=1, stdout="", stderr="Collections failed")  # query-collections
+            MagicMock(returncode=0, stdout="", stderr="")  # query-collections (empty)
         ]
-        
+
         result = get_repository_info(str(self.repo_path))
-        
+
         self.assertIsNotNone(result)
-        self.assertEqual(result['key1'], 'Value1')
-        self.assertEqual(result['key2'], 'Value2')
-        # collections should not be present
+        # collections should not be present when there are none
         self.assertNotIn('collections', result)
     
     @patch('ripple.butler_repo.create_repo.verify_repository')
@@ -326,10 +329,11 @@ class TestCreateRepo(unittest.TestCase):
         result = initialize_repository(self.test_config, str(self.repo_path))
         
         self.assertTrue(result)
-        
-        # Verify subprocess was called correctly
-        mock_subprocess.assert_called_once()
-        args, kwargs = mock_subprocess.call_args
+
+        # Verify subprocess was called correctly. The default config registers an
+        # instrument, so a second "register-instrument" call is also expected.
+        create_call = mock_subprocess.call_args_list[0]
+        args, kwargs = create_call
         self.assertEqual(args[0][0], "butler")
         self.assertEqual(args[0][1], "create")
         self.assertIn(str(self.repo_path), args[0])
@@ -348,10 +352,11 @@ class TestCreateRepo(unittest.TestCase):
         result = initialize_repository(self.test_config, str(self.repo_path))
         
         self.assertTrue(result)
-        
-        # Verify subprocess was called correctly
-        mock_subprocess.assert_called_once()
-        args, kwargs = mock_subprocess.call_args
+
+        # Verify subprocess was called correctly. The default config registers an
+        # instrument, so a second "register-instrument" call is also expected.
+        create_call = mock_subprocess.call_args_list[0]
+        args, kwargs = create_call
         self.assertEqual(args[0][0], "butler")
         self.assertEqual(args[0][1], "create")
         self.assertIn(str(self.repo_path), args[0])

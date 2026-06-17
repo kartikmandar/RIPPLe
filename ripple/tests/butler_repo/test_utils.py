@@ -162,6 +162,7 @@ class TestUtils(unittest.TestCase):
         
         # Mock metadata
         mock_metadata = MagicMock()
+        mock_metadata.__contains__ = lambda self, key: key == "INSTRUME"
         mock_metadata.__getitem__ = lambda self, key: "HSC" if key == "INSTRUME" else None
         mock_read_metadata.return_value = mock_metadata
         
@@ -185,11 +186,14 @@ class TestUtils(unittest.TestCase):
         
         # Mock astropy fits
         mock_header = MagicMock()
+        mock_header.__contains__ = lambda self, key: key == "INSTRUME"
         mock_header.__getitem__ = lambda self, key: "LSST" if key == "INSTRUME" else None
+        mock_primary_hdu = MagicMock()
+        mock_primary_hdu.header = mock_header
         mock_hdul = MagicMock()
         mock_hdul.__enter__ = MagicMock(return_value=mock_hdul)
         mock_hdul.__exit__ = MagicMock(return_value=None)
-        mock_hdul.__getitem__ = MagicMock(return_value=mock_header)
+        mock_hdul.__getitem__ = MagicMock(return_value=mock_primary_hdu)
         mock_fits_open.return_value = mock_hdul
         
         result = detect_instrument_from_fits(test_file)
@@ -342,23 +346,17 @@ class TestUtils(unittest.TestCase):
         
         self.assertFalse(result)
     
-    @patch('lsst.daf.butler.__version__')
-    def test_get_butler_version_lsst_package(self, mock_version):
+    @patch('lsst.daf.butler.__version__', "1.2.3")
+    def test_get_butler_version_lsst_package(self):
         """Test getting butler version from LSST package."""
-        # Mock version
-        mock_version.__get__ = MagicMock(return_value="1.2.3")
-        
         result = get_butler_version()
         
         self.assertEqual(result, "Butler 1.2.3")
     
-    @patch('lsst.daf.butler.__version__')
+    @patch('lsst.daf.butler.__version__', None)
     @patch('subprocess.run')
-    def test_get_butler_version_fallback_to_command(self, mock_subprocess, mock_version):
+    def test_get_butler_version_fallback_to_command(self, mock_subprocess):
         """Test getting butler version with fallback to command."""
-        # Mock version to be None
-        mock_version.__get__ = MagicMock(return_value=None)
-        
         # Mock successful subprocess call
         mock_subprocess.return_value = MagicMock(returncode=0, stdout="Help text", stderr="")
         
@@ -369,13 +367,10 @@ class TestUtils(unittest.TestCase):
         # Verify subprocess was called
         mock_subprocess.assert_called_once()
     
-    @patch('lsst.daf.butler.__version__')
+    @patch('lsst.daf.butler.__version__', None)
     @patch('subprocess.run')
-    def test_get_butler_version_no_version(self, mock_subprocess, mock_version):
+    def test_get_butler_version_no_version(self, mock_subprocess):
         """Test getting butler version with no version available."""
-        # Mock version to be None
-        mock_version.__get__ = MagicMock(return_value=None)
-        
         # Mock failed subprocess call
         mock_subprocess.return_value = MagicMock(returncode=1, stdout="", stderr="Command not found")
         

@@ -40,7 +40,7 @@ class TestRepoManager(unittest.TestCase):
         
         # Create test configuration
         self.test_config = get_default_config()
-        self.test_config.data_source.path = str(self.data_path)
+        self.test_config.data_source['path'] = str(self.data_path)
         
         # Create repository manager
         self.manager = ButlerRepoManager(self.test_config)
@@ -104,32 +104,32 @@ class TestRepoManager(unittest.TestCase):
     
     def test_determine_repository_path_butler_repo_exists(self):
         """Test determining repository path for existing butler repository."""
-        self.test_config.data_source.type = 'butler_repo'
-        self.test_config.data_source.create_if_missing = False
+        self.test_config.data_source['type'] = 'butler_repo'
+        self.test_config.data_source['create_if_missing'] = False
         # Fix: Set the path to point to where the butler.yaml file actually exists
-        self.test_config.data_source.path = str(self.repo_path)
-        
+        self.test_config.data_source['path'] = str(self.repo_path)
+
         repo_path, needs_creation = self.manager._determine_repository_path()
-        
-        self.assertEqual(repo_path, Path(self.test_config.data_source.path))
+
+        self.assertEqual(repo_path, Path(self.test_config.data_source['path']))
         self.assertFalse(needs_creation)
     
     def test_determine_repository_path_butler_repo_create_if_missing(self):
         """Test determining repository path for butler repository with create_if_missing."""
-        self.test_config.data_source.type = 'butler_repo'
-        self.test_config.data_source.path = str(self.repo_path / "new_repo")
-        self.test_config.data_source.create_if_missing = True
-        
+        self.test_config.data_source['type'] = 'butler_repo'
+        self.test_config.data_source['path'] = str(self.repo_path / "new_repo")
+        self.test_config.data_source['create_if_missing'] = True
+
         repo_path, needs_creation = self.manager._determine_repository_path()
-        
-        self.assertEqual(repo_path, Path(self.test_config.data_source.path))
+
+        self.assertEqual(repo_path, Path(self.test_config.data_source['path']))
         self.assertTrue(needs_creation)
     
     def test_determine_repository_path_butler_repo_not_found(self):
         """Test determining repository path for non-existent butler repository."""
-        self.test_config.data_source.type = 'butler_repo'
-        self.test_config.data_source.path = str(self.repo_path / "non_existent")
-        self.test_config.data_source.create_if_missing = False
+        self.test_config.data_source['type'] = 'butler_repo'
+        self.test_config.data_source['path'] = str(self.repo_path / "non_existent")
+        self.test_config.data_source['create_if_missing'] = False
         
         with self.assertRaises(ValueError) as context:
             self.manager._determine_repository_path()
@@ -138,10 +138,10 @@ class TestRepoManager(unittest.TestCase):
     
     def test_determine_repository_path_data_folder_exists(self):
         """Test determining repository path for existing data folder."""
-        self.test_config.data_source.type = 'data_folder'
-        
+        self.test_config.data_source['type'] = 'data_folder'
+
         # Create butler_repo subdirectory to simulate existing repository
-        butler_repo_path = Path(self.test_config.data_source.path) / "butler_repo"
+        butler_repo_path = Path(self.test_config.data_source['path']) / "butler_repo"
         butler_repo_path.mkdir(parents=True, exist_ok=True)
         (butler_repo_path / "butler.yaml").touch()
         
@@ -152,10 +152,10 @@ class TestRepoManager(unittest.TestCase):
     
     def test_determine_repository_path_data_folder_new(self):
         """Test determining repository path for new data folder."""
-        self.test_config.data_source.type = 'data_folder'
-        
+        self.test_config.data_source['type'] = 'data_folder'
+
         # Remove butler_repo subdirectory if it exists
-        butler_repo_path = Path(self.test_config.data_source.path) / "butler_repo"
+        butler_repo_path = Path(self.test_config.data_source['path']) / "butler_repo"
         if butler_repo_path.exists():
             shutil.rmtree(butler_repo_path)
         
@@ -166,8 +166,8 @@ class TestRepoManager(unittest.TestCase):
     
     def test_determine_repository_path_data_folder_not_found(self):
         """Test determining repository path for non-existent data folder."""
-        self.test_config.data_source.type = 'data_folder'
-        self.test_config.data_source.path = str(self.data_path / "non_existent")
+        self.test_config.data_source['type'] = 'data_folder'
+        self.test_config.data_source['path'] = str(self.data_path / "non_existent")
         
         with self.assertRaises(ValueError) as context:
             self.manager._determine_repository_path()
@@ -176,8 +176,8 @@ class TestRepoManager(unittest.TestCase):
     
     def test_determine_repository_path_butler_server(self):
         """Test determining repository path for butler server."""
-        self.test_config.data_source.type = 'butler_server'
-        self.test_config.data_source.server_url = "http://example.com"
+        self.test_config.data_source['type'] = 'butler_server'
+        self.test_config.data_source['server_url'] = "http://example.com"
         
         repo_path, needs_creation = self.manager._determine_repository_path()
         
@@ -186,7 +186,7 @@ class TestRepoManager(unittest.TestCase):
     
     def test_determine_repository_path_unknown_type(self):
         """Test determining repository path with unknown data source type."""
-        self.test_config.data_source.type = 'unknown_type'
+        self.test_config.data_source['type'] = 'unknown_type'
         
         with self.assertRaises(ValueError) as context:
             self.manager._determine_repository_path()
@@ -242,43 +242,46 @@ class TestRepoManager(unittest.TestCase):
         
         self.assertFalse(result)
     
-    @patch('ripple.butler_repo.create_repo.initialize_repository')
+    @patch('ripple.butler_repo.repo_manager.initialize_repository')
     @patch('ripple.butler_repo.repo_manager.ButlerRepoManager._check_data_exists')
     @patch('ripple.butler_repo.repo_manager.ButlerRepoManager._manual_data_ingestion')
-    def test_create_and_setup_repository_data_folder_with_export(self, mock_manual, mock_check_data, mock_init):
+    @patch.object(DataIngestor, 'import_from_export')
+    def test_create_and_setup_repository_data_folder_with_export(self, mock_import, mock_manual, mock_check_data, mock_init):
         """Test creating and setting up repository with data folder and export file."""
         # Set up data folder configuration
-        self.test_config.data_source.type = 'data_folder'
-        
+        self.test_config.data_source['type'] = 'data_folder'
+
         # Create export file
-        export_file = Path(self.test_config.data_source.path) / "export.yaml"
+        export_file = Path(self.test_config.data_source['path']) / "export.yaml"
         export_file.touch()
-        
+
         # Mock method calls
         mock_init.return_value = True
         mock_check_data.return_value = False  # No data exists yet
-        
+        mock_import.return_value = True  # Import succeeds
+
         result = self.manager._create_and_setup_repository(self.repo_path)
-        
+
         self.assertTrue(result)
-        
+
         # Verify methods were called
         mock_init.assert_called_once_with(self.test_config, str(self.repo_path))
         mock_check_data.assert_called_once_with(self.repo_path)
+        mock_import.assert_called_once()  # Import was used
         mock_manual.assert_not_called()  # Manual ingestion not needed with export file
     
-    @patch('ripple.butler_repo.create_repo.initialize_repository')
+    @patch('ripple.butler_repo.repo_manager.initialize_repository')
     @patch('ripple.butler_repo.repo_manager.ButlerRepoManager._check_data_exists')
     @patch('ripple.butler_repo.repo_manager.ButlerRepoManager._manual_data_ingestion')
     def test_create_and_setup_repository_data_folder_with_existing_data(self, mock_manual, mock_check_data, mock_init):
         """Test creating and setting up repository with existing data."""
         # Set up data folder configuration
-        self.test_config.data_source.type = 'data_folder'
-        
+        self.test_config.data_source['type'] = 'data_folder'
+
         # Create export file
-        export_file = Path(self.test_config.data_source.path) / "export.yaml"
+        export_file = Path(self.test_config.data_source['path']) / "export.yaml"
         export_file.touch()
-        
+
         # Mock method calls
         mock_init.return_value = True
         mock_check_data.return_value = True  # Data already exists
@@ -292,19 +295,19 @@ class TestRepoManager(unittest.TestCase):
         mock_check_data.assert_called_once_with(self.repo_path)
         mock_manual.assert_not_called()  # Manual ingestion not needed with existing data
     
-    @patch('ripple.butler_repo.create_repo.initialize_repository')
+    @patch('ripple.butler_repo.repo_manager.initialize_repository')
     @patch('ripple.butler_repo.repo_manager.ButlerRepoManager._check_data_exists')
     @patch('ripple.butler_repo.repo_manager.ButlerRepoManager._manual_data_ingestion')
     @patch.object(DataIngestor, 'import_from_export')
     def test_create_and_setup_repository_data_folder_export_import_failure(self, mock_import, mock_manual, mock_check_data, mock_init):
         """Test creating and setting up repository with export file import failure."""
         # Set up data folder configuration
-        self.test_config.data_source.type = 'data_folder'
-        
+        self.test_config.data_source['type'] = 'data_folder'
+
         # Create export file
-        export_file = Path(self.test_config.data_source.path) / "export.yaml"
+        export_file = Path(self.test_config.data_source['path']) / "export.yaml"
         export_file.touch()
-        
+
         # Mock method calls
         mock_init.return_value = True
         mock_check_data.return_value = False  # No data exists yet
@@ -320,13 +323,13 @@ class TestRepoManager(unittest.TestCase):
         mock_check_data.assert_called_once_with(self.repo_path)
         mock_manual.assert_called_once_with(self.repo_path)
     
-    @patch('ripple.butler_repo.create_repo.initialize_repository')
+    @patch('ripple.butler_repo.repo_manager.initialize_repository')
     @patch('ripple.butler_repo.repo_manager.ButlerRepoManager._manual_data_ingestion')
     def test_create_and_setup_repository_data_folder_no_export(self, mock_manual, mock_init):
         """Test creating and setting up repository with data folder but no export file."""
         # Set up data folder configuration
-        self.test_config.data_source.type = 'data_folder'
-        
+        self.test_config.data_source['type'] = 'data_folder'
+
         # Don't create export file
         
         # Mock method calls
@@ -341,7 +344,7 @@ class TestRepoManager(unittest.TestCase):
         mock_init.assert_called_once_with(self.test_config, str(self.repo_path))
         mock_manual.assert_called_once_with(self.repo_path)
     
-    @patch('ripple.butler_repo.create_repo.initialize_repository')
+    @patch('ripple.butler_repo.repo_manager.initialize_repository')
     def test_create_and_setup_repository_initialization_failure(self, mock_init):
         """Test creating and setting up repository with initialization failure."""
         # Mock method calls
@@ -485,7 +488,7 @@ class TestRepoManager(unittest.TestCase):
     def test_manual_data_ingestion_with_hsc_data_structure(self):
         """Test manual data ingestion with HSC data structure."""
         # Create HSC data structure
-        hsc_data_path = Path(self.test_config.data_source.path) / "HSC"
+        hsc_data_path = Path(self.test_config.data_source['path']) / "HSC"
         hsc_data_path.mkdir(parents=True, exist_ok=True)
         (hsc_data_path / "raw").mkdir(parents=True, exist_ok=True)
         (hsc_data_path / "calib").mkdir(parents=True, exist_ok=True)
@@ -509,13 +512,13 @@ class TestRepoManager(unittest.TestCase):
             self.assertTrue(result)
             
             # Verify config was updated with HSC paths
-            self.assertEqual(self.test_config.ingestion.raw_data_pattern, "HSC/raw/**/*.fits")
-            self.assertEqual(self.test_config.ingestion.calibration_path, str(hsc_data_path / "calib"))
+            self.assertEqual(self.test_config.ingestion['raw_data_pattern'], "HSC/raw/**/*.fits")
+            self.assertEqual(self.test_config.ingestion['calibration_path'], str(hsc_data_path / "calib"))
     
     def test_manual_data_ingestion_with_refcats(self):
         """Test manual data ingestion with refcats."""
         # Create refcats directory
-        refcats_path = Path(self.test_config.data_source.path) / "refcats"
+        refcats_path = Path(self.test_config.data_source['path']) / "refcats"
         refcats_path.mkdir(parents=True, exist_ok=True)
         
         # Create test catalog file
@@ -535,7 +538,7 @@ class TestRepoManager(unittest.TestCase):
             self.assertTrue(result)
             
             # Verify config was updated with refcats path
-            self.assertEqual(self.test_config.ingestion.reference_catalog_path, str(refcats_path))
+            self.assertEqual(self.test_config.ingestion['reference_catalog_path'], str(refcats_path))
 
 
 if __name__ == '__main__':

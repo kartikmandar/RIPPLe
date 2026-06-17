@@ -80,12 +80,12 @@ class TestConfigHandler(unittest.TestCase):
         config = load_config(self.config_path)
         
         self.assertIsInstance(config, RepoConfig)
-        self.assertEqual(config.data_source.type, 'data_folder')
+        self.assertEqual(config.data_source['type'], 'data_folder')
         self.assertEqual(config.instrument.name, 'HSC')
-        self.assertEqual(config.ingestion.transfer_mode, 'symlink')
+        self.assertEqual(config.ingestion['transfer_mode'], 'symlink')
         self.assertEqual(config.butler.registry_db, 'sqlite')
-        self.assertEqual(config.processing.cutout_size, 64)
-    
+        self.assertEqual(config.processing['cutout_size'], 64)
+
     def test_load_config_file_not_found(self):
         """Test loading configuration with non-existent file."""
         non_existent_path = Path(self.temp_dir) / "non_existent.yaml"
@@ -109,36 +109,42 @@ class TestConfigHandler(unittest.TestCase):
         validate_config(config)
     
     def test_validate_config_invalid_data_source_type(self):
-        """Test validation with invalid data source type."""
+        """Test that validation no longer rejects data source type.
+
+        Pipeline stage configs (data_source, ingestion, ...) are now flexible
+        dicts and are validated by the individual stages, not by
+        ``validate_config``. An arbitrary ``type`` must therefore pass core
+        validation without raising.
+        """
         config = load_config(self.config_path)
-        config.data_source.type = 'invalid_type'
-        
-        with self.assertRaises(ValueError) as context:
-            validate_config(config)
-        
-        self.assertIn("Invalid data source type", str(context.exception))
-    
+        config.data_source['type'] = 'invalid_type'
+
+        # Core validation no longer inspects the data source type.
+        validate_config(config)
+
     def test_validate_config_missing_butler_repo_path(self):
-        """Test validation with missing butler repository path."""
+        """Test that a missing butler repo path is no longer a core error.
+
+        The data_source config is now a flexible dict validated per-stage, so
+        a ``butler_repo`` type without a ``path`` passes core validation.
+        """
         config = load_config(self.config_path)
-        config.data_source.type = 'butler_repo'
-        config.data_source.path = None
-        
-        with self.assertRaises(ValueError) as context:
-            validate_config(config)
-        
-        self.assertIn("Butler repository path required", str(context.exception))
-    
+        config.data_source['type'] = 'butler_repo'
+        config.data_source['path'] = None
+
+        # Core validation no longer requires a path for butler_repo.
+        validate_config(config)
+
     def test_validate_config_missing_butler_server_url(self):
         """Test validation with missing butler server URL."""
         config = load_config(self.config_path)
-        config.data_source.type = 'butler_server'
-        config.data_source.server_url = None
-        
+        config.data_source['type'] = 'butler_server'
+        config.data_source['server_url'] = None
+
         with self.assertRaises(ValueError) as context:
             validate_config(config)
-        
-        self.assertIn("Server URL required", str(context.exception))
+
+        self.assertIn("server_url is required", str(context.exception))
     
     def test_validate_config_missing_instrument_name(self):
         """Test validation with missing instrument name."""
@@ -151,14 +157,17 @@ class TestConfigHandler(unittest.TestCase):
         self.assertIn("Instrument name is required", str(context.exception))
     
     def test_validate_config_invalid_transfer_mode(self):
-        """Test validation with invalid transfer mode."""
+        """Test that validation no longer rejects the ingestion transfer mode.
+
+        The ingestion config is now a flexible dict validated by the ingestion
+        stage, not by ``validate_config``, so an arbitrary transfer mode passes
+        core validation.
+        """
         config = load_config(self.config_path)
-        config.ingestion.transfer_mode = 'invalid_mode'
-        
-        with self.assertRaises(ValueError) as context:
-            validate_config(config)
-        
-        self.assertIn("Invalid transfer mode", str(context.exception))
+        config.ingestion['transfer_mode'] = 'invalid_mode'
+
+        # Core validation no longer inspects the transfer mode.
+        validate_config(config)
     
     def test_validate_config_invalid_registry_db(self):
         """Test validation with invalid registry database."""
@@ -186,12 +195,12 @@ class TestConfigHandler(unittest.TestCase):
         config = get_default_config()
         
         self.assertIsInstance(config, RepoConfig)
-        self.assertEqual(config.data_source.type, 'data_folder')
+        self.assertEqual(config.data_source['type'], 'data_folder')
         self.assertEqual(config.instrument.name, 'HSC')
-        self.assertEqual(config.ingestion.transfer_mode, 'symlink')
+        self.assertEqual(config.ingestion['transfer_mode'], 'symlink')
         self.assertEqual(config.butler.registry_db, 'sqlite')
-        self.assertEqual(config.processing.cutout_size, 64)
-    
+        self.assertEqual(config.processing['cutout_size'], 64)
+
     def test_save_config(self):
         """Test saving configuration to file."""
         config = get_default_config()
@@ -203,19 +212,19 @@ class TestConfigHandler(unittest.TestCase):
         
         # Load and verify the saved configuration
         loaded_config = load_config(output_path)
-        self.assertEqual(loaded_config.data_source.type, config.data_source.type)
+        self.assertEqual(loaded_config.data_source['type'], config.data_source['type'])
         self.assertEqual(loaded_config.instrument.name, config.instrument.name)
-        self.assertEqual(loaded_config.ingestion.transfer_mode, config.ingestion.transfer_mode)
+        self.assertEqual(loaded_config.ingestion['transfer_mode'], config.ingestion['transfer_mode'])
     
     def test_config_from_dict(self):
         """Test creating configuration from dictionary."""
         config = RepoConfig.from_dict(self.test_config_dict)
-        
-        self.assertEqual(config.data_source.type, 'data_folder')
+
+        self.assertEqual(config.data_source['type'], 'data_folder')
         self.assertEqual(config.instrument.name, 'HSC')
-        self.assertEqual(config.ingestion.transfer_mode, 'symlink')
+        self.assertEqual(config.ingestion['transfer_mode'], 'symlink')
         self.assertEqual(config.butler.registry_db, 'sqlite')
-        self.assertEqual(config.processing.cutout_size, 64)
+        self.assertEqual(config.processing['cutout_size'], 64)
     
     def test_data_source_config_creation(self):
         """Test DataSourceConfig creation."""
@@ -316,7 +325,7 @@ class TestConfigHandler(unittest.TestCase):
         config = RepoConfig.from_dict(expanded_config_dict)
         
         # Environment variable should be expanded
-        self.assertEqual(config.data_source.path, '/path/to/test/data')
+        self.assertEqual(config.data_source['path'], '/path/to/test/data')
         
         # Clean up
         del os.environ['TEST_DATA_PATH']
