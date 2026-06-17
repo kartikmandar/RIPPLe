@@ -51,7 +51,12 @@ setup lsst_distrib
 ```bash
 git clone https://github.com/kartikmandar/RIPPLe
 cd RIPPLe
+pip install -e .          # editable install; deps come from the LSST stack env
 ```
+
+> **Apple Silicon (osx-arm64):** native LSST binaries exist — install with
+> `curl -OL https://ls.st/lsstinstall && ./lsstinstall -T v30_0_8 -P`, then
+> `source loadLSST.zsh && eups distrib install -t v30_0_8 lsst_distrib`.
 
 ---
 
@@ -91,10 +96,51 @@ pipeline:
 
 ---
 
+## Data Access
+
+The `ripple.data_access` module is the core Phase-1 deliverable. It exposes two
+entry points:
+
+- **`ButlerClient`** — a thin wrapper over `lsst.daf.butler.Butler` with typed
+  retrieval methods (`get_calexp`, `get_deepCoadd`, `get_source_catalog`,
+  `get_object_catalog`, `get_cutout`) and graceful not-found handling.
+- **`LsstDataFetcher`** — a higher-level, multi-backend interface (local Butler
+  repo, remote Butler server, or RSP TAP/SIA) used by the pipeline stages.
+
+### Data releases (DP1 vs DP0.2)
+
+LSST renamed dataset types between DP0.2 and DP1 (`calexp` → `visit_image`,
+`deepCoadd` → `deep_coadd`, `objectTable` → `object`). RIPPLe handles this with a
+`data_release` setting (**default `dp1`**): the public method names stay the
+same, while the concrete Butler dataset type is resolved per release. Set it in
+a config's `data_source` block (`data_release: dp1` or `data_release: dp02`), or
+pass it directly:
+
+```python
+from ripple.data_access import ButlerClient, ButlerConfig
+
+# Legacy HSC / DP0.2-style repo (e.g. the bundled pipelines_check demo data)
+config = ButlerConfig(
+    repo_path="data/pipelines_check-29.1.1/DATA_REPO",
+    collections=["demo_collection"],
+    data_release="dp02",
+)
+client = ButlerClient(config=config)
+
+exposure = client.get_calexp(visit=903342, detector=10)        # -> lsst.afw.image.ExposureF
+catalog  = client.get_source_catalog(visit=903342, detector=10)
+
+# DP1 (default): get_calexp resolves to the 'visit_image' dataset type
+dp1_client = ButlerClient(repo_path="/path/to/dp1/repo", collections=["..."])
+```
+
+Per-dataset overrides are supported via `dataset_types={"calexp": "..."}`.
+A runnable walkthrough lives in [`notebooks/01_end_to_end_demo.ipynb`](notebooks/01_end_to_end_demo.ipynb).
+
 ## Project Structure
 
 ```
-/home/kartikmandar/RIPPLe/
+RIPPLe/
 ├── README.md                    # This file
 ├── pipeline_configs/            # YAML configuration files for different demo datasets
 │   ├── rc2_subset_pipeline.yaml

@@ -31,60 +31,16 @@ class PreprocessingStage(PipelineStage):
         self.preprocessing_steps = processing_specific_config.get('steps', [])
         self.preprocessing_params = processing_specific_config.get('params', {})
 
-        # Debug: Check actual config structure
-        print(f"DEBUG: data_source type: {type(self.config)}")
-        print(f"DEBUG: has 'get' method: {hasattr(self.config, 'get')}")
-        if hasattr(self.config, 'data_source'):
-            ds = getattr(self.config, 'data_source', 'MISSING')
-            print(f"DEBUG: data_source found: {type(ds)} - keys: {list(ds.keys()) if isinstance(ds, dict) else 'NOT_DICT'}")
-        if hasattr(self.config, 'processing'):
-            proc = getattr(self.config, 'processing', None)  # No default to see actual content
-            print(f"DEBUG: processing found: {type(proc)} - keys: {list(proc.keys()) if isinstance(proc, dict) else 'NOT_DICT'}")
-            if isinstance(proc, dict) and proc:
-                # Found valid processing config!
-                print(f"DEBUG: Valid processing config found with {len(proc)} keys")
-            else:
-                print(f"DEBUG: Processing config is empty or invalid: {proc}")
-            print(f"DEBUG: All config attributes: {[attr for attr in dir(self.config) if not attr.startswith('_')]}")
-
-        # Debug logging
-        print(f"DEBUG: PreprocessingStage.__init__")
-        print(f"DEBUG: Full config type: {type(self.config)}")
-        print(f"DEBUG: processing_specific_config: {processing_specific_config}")
-        print(f"DEBUG: preprocessing_steps: {self.preprocessing_steps}")
-        print(f"DEBUG: Config has 'get' method: {hasattr(self.config, 'get')}")
-
-        # Debug: check what's in the config object
-        if hasattr(self.config, 'processing'):
-            print(f"DEBUG: Config has 'processing' attribute: {getattr(self.config, 'processing', 'NOT_FOUND')}")
-        if hasattr(self.config, 'data_source'):
-            print(f"DEBUG: Config has 'data_source' attribute: {getattr(self.config, 'data_source', 'NOT_FOUND')}")
-
-        # Debug logging
-        print(f"DEBUG: PreprocessingStage.__init__")
-        print(f"DEBUG: Full config type: {type(self.config)}")
-        print(f"DEBUG: processing_specific_config: {processing_specific_config}")
-        print(f"DEBUG: preprocessing_steps: {self.preprocessing_steps}")
-
         # Initialize cutout saver if output is configured
         self.cutout_saver = None
         self.data_fetcher = None
-
-        # Debug output config
-        print(f"DEBUG: output_config = {output_config}")
-        print(f"DEBUG: save_cutouts = {output_config.get('save_cutouts', 'NOT_FOUND')}")
 
         if output_config.get('save_cutouts', False):
             output_dir = output_config.get('directory', './results/cutouts')
             self.cutout_saver = CutoutSaver(output_dir)
             Logger.info(f"✓ Cutout saver initialized with output directory: {output_dir}")
-            print(f"DEBUG: CutoutSaver created for directory: {output_dir}")
         else:
             Logger.info("Cutout saving disabled in output configuration")
-            print("DEBUG: Cutout saving is DISABLED")
-
-        # Initialize data fetcher (will be configured when execute is called)
-        self.data_fetcher = None
 
     def execute(self, data: Any = None) -> Any:
         """

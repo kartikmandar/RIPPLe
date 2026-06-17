@@ -9,7 +9,6 @@ from .stages.model_stage import ModelStage
 from .stages.ingestion_stage import IngestionStage
 
 # Set up logging
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class PipelineBuilder:

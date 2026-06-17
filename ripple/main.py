@@ -37,7 +37,6 @@ except ImportError:
 
 from ripple.butler_repo import ButlerRepoManager, load_config, get_default_config, save_config
 from ripple.butler_repo.utils import check_lsst_environment, validate_butler_command
-from ripple.data_access import LsstDataFetcher, ButlerConfig
 from ripple.utils.logger import Logger
 
 
@@ -158,52 +157,6 @@ class RipplePipeline:
             return True
         else:
             Logger.error(f"Failed to setup repository: {result}")
-            return False
-    
-    def _initialize_data_access(self) -> bool:
-        """Initialize data access layer."""
-        Logger.step("Step 4", "Initializing data access...")
-        
-        # Skip for server-based repositories
-        if self.config.data_source.get('type') == 'butler_server':
-            Logger.info("Using remote Butler server - skipping local data access initialization")
-            return True
-        
-        try:
-            # Get data fetcher from repo manager if available
-            self.data_fetcher = self.repo_manager.get_data_fetcher()
-            
-            if self.data_fetcher:
-                Logger.success("✓ Data access initialized from repository manager")
-            else:
-                # Create new data fetcher
-                butler_config = ButlerConfig(
-                    repo_path=str(self.repo_path),
-                    collections=self.config.data_source.get('params', {}).get('collections') or [
-                        f"{self.config.instrument.name}/defaults",
-                        f"{self.config.instrument.name}/raw/all",
-                        f"{self.config.instrument.name}/calib",
-                        "refcats"
-                    ],
-                    instrument=self.config.instrument.name,
-                    cache_size=self.config.processing.get('cache_size', 1000),
-                    enable_performance_monitoring=self.config.processing.get('enable_performance_monitoring', True)
-                )
-                
-                self.data_fetcher = LsstDataFetcher(butler_config)
-                Logger.success("✓ Data access initialized")
-            
-            # Test data access
-            validation = self.data_fetcher.validate_configuration()
-            if validation['butler_connection']:
-                Logger.success("✓ Butler connection verified")
-            else:
-                Logger.warning("Butler connection validation failed")
-            
-            return True
-            
-        except Exception as e:
-            Logger.error(f"Failed to initialize data access: {e}")
             return False
     
     def _run_pipeline(self) -> bool:
