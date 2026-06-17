@@ -243,7 +243,7 @@ class LsstDataFetcher:
             raise DataAccessError("Butler client not available")
 
         try:
-            return self.butler_client.get_deep_coadd(tract, patch, band)
+            return self.butler_client.get_deepCoadd(tract, patch, band)
         except Exception as e:
             raise DataAccessError(f"Failed to retrieve deep coadd: {e}")
 
