@@ -489,9 +489,9 @@ Examples:
             parser.error("Either config file or --data-path is required")
         
         config = get_default_config()
-        config.data_source.type = args.data_type
-        config.data_source.path = args.data_path
-        
+        config.data_source['type'] = args.data_type
+        config.data_source['path'] = args.data_path
+
         if args.instrument:
             config.instrument.name = args.instrument
             # Set instrument class
@@ -501,9 +501,9 @@ Examples:
                 "DECam": "lsst.obs.decam.DarkEnergyCamera"
             }
             config.instrument.class_name = instrument_classes[args.instrument]
-        
+
         if args.transfer:
-            config.ingestion.transfer_mode = args.transfer
+            config.ingestion['transfer_mode'] = args.transfer
     
     # Create and run manager
     try:

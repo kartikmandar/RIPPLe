@@ -53,23 +53,23 @@ class DataIngestor:
         }
         
         # Ingest raw data
-        if self.config.ingestion.raw_data_pattern:
+        if self.config.ingestion.get('raw_data_pattern'):
             logger.info("Ingesting raw data...")
             raw_results = self.ingest_raw_data()
             results["raw_data"] = raw_results
             
             # Define visits if successful and requested
-            if raw_results["success"] and self.config.ingestion.define_visits:
+            if raw_results["success"] and self.config.ingestion.get('define_visits', True):
                 logger.info("Defining visits...")
                 results["visits_defined"] = self.define_visits()
         
         # Ingest calibrations
-        if self.config.ingestion.calibration_path:
+        if self.config.ingestion.get('calibration_path'):
             logger.info("Ingesting calibrations...")
             results["calibrations"] = self.ingest_calibrations()
         
         # Ingest reference catalogs
-        if self.config.ingestion.reference_catalog_path:
+        if self.config.ingestion.get('reference_catalog_path'):
             logger.info("Ingesting reference catalogs...")
             results["reference_catalogs"] = self.ingest_reference_catalogs()
         
@@ -87,8 +87,8 @@ class DataIngestor:
         results = {"success": False, "count": 0, "errors": []}
         
         # Find data files
-        data_path = Path(self.config.data_source.path)
-        pattern = self.config.ingestion.raw_data_pattern or "**/*.fits"
+        data_path = Path(self.config.data_source.get('path'))
+        pattern = self.config.ingestion.get('raw_data_pattern') or "**/*.fits"
         
         raw_files = []
         if data_path.is_dir():
@@ -113,13 +113,13 @@ class DataIngestor:
             ] + [str(f) for f in batch]
             
             # Add options
-            cmd.extend(["--transfer", self.config.ingestion.transfer_mode])
+            cmd.extend(["--transfer", self.config.ingestion.get('transfer_mode', 'symlink')])
             cmd.extend(["--output-run", f"{self.instrument}/raw/all"])
             
             # Note: ingest-raws doesn't have a skip-existing option
             
-            if self.config.ingestion.processes > 1:
-                cmd.extend(["-j", str(self.config.ingestion.processes)])
+            if self.config.ingestion.get('processes', 1) > 1:
+                cmd.extend(["-j", str(self.config.ingestion.get('processes', 1))])
             
             # Execute ingestion
             try:
@@ -209,7 +209,7 @@ class DataIngestor:
         """
         results = {"success": False, "count": 0, "errors": []}
         
-        calib_path = Path(self.config.ingestion.calibration_path)
+        calib_path = Path(self.config.ingestion.get('calibration_path'))
         if not calib_path.exists():
             results["errors"].append(f"Calibration path does not exist: {calib_path}")
             return results
@@ -241,7 +241,7 @@ class DataIngestor:
                 str(self.repo_path)
             ] + [str(f) for f in calib_files]
             
-            cmd.extend(["--transfer", self.config.ingestion.transfer_mode])
+            cmd.extend(["--transfer", self.config.ingestion.get('transfer_mode', 'symlink')])
             cmd.extend(["--output-run", f"{self.instrument}/calib/{calib_type}"])
             
             # Note: ingest-raws doesn't have a skip-existing option
@@ -318,7 +318,7 @@ class DataIngestor:
         """
         results = {"success": False, "count": 0, "errors": []}
         
-        refcat_path = Path(self.config.ingestion.reference_catalog_path)
+        refcat_path = Path(self.config.ingestion.get('reference_catalog_path'))
         if not refcat_path.exists():
             results["errors"].append(f"Reference catalog path does not exist: {refcat_path}")
             return results
@@ -487,7 +487,7 @@ class DataIngestor:
             str(self.repo_path),
             str(data_dir),
             "--export-file", str(export_file),
-            "--transfer", self.config.ingestion.transfer_mode
+            "--transfer", self.config.ingestion.get('transfer_mode', 'symlink')
         ]
         
         try:
