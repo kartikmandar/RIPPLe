@@ -9,3 +9,15 @@ class NormalizationError(PreprocessingError):
 class CutoutError(PreprocessingError):
     """Exception for cutout errors."""
     pass
+
+
+class CleaningError(PreprocessingError):
+    """Raised when data cleaning fails irrecoverably."""
+
+
+class PSFMatchError(PreprocessingError):
+    """Raised when PSF matching cannot be performed."""
+
+
+class ManifestError(PreprocessingError):
+    """Raised on malformed preprocessing manifests."""
