@@ -19,6 +19,12 @@ class CutoutSaver:
     Save multi-band cutouts with metadata for ML training
     """
 
+    # Canonical RGB channel assignment for an LSST gri composite:
+    #   i -> Red, r -> Green, g -> Blue.
+    # i (the reddest of g/r/i) maps to the red channel and g (the bluest) to
+    # the blue channel, matching how color images are produced from gri data.
+    RGB_BAND_ORDER = ("i", "r", "g")
+
     def __init__(self, output_dir: str = "./results/cutouts"):
         """
         Initialize the cutout saver.
@@ -219,12 +225,12 @@ class CutoutSaver:
 
                 normalized_bands[band] = arr
 
-            # Create RGB mapping: g->G, r->R, i->B (near-IR for blue channel)
-            rgb = np.stack([
-                normalized_bands['r'],  # Red channel
-                normalized_bands['g'],  # Green channel
-                normalized_bands['i']   # Blue channel (near-IR)
-            ], axis=2)
+            # Stack channels using the canonical RGB band order:
+            #   RGB_BAND_ORDER = (i, r, g) -> Red=i, Green=r, Blue=g.
+            rgb = np.stack(
+                [normalized_bands[band] for band in self.RGB_BAND_ORDER],
+                axis=2,
+            )
 
             return rgb
 

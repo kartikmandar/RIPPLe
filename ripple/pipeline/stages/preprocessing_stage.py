@@ -2,6 +2,7 @@ from ripple.utils.logger import Logger
 from ripple.pipeline.pipeline_stage import PipelineStage
 from ripple.utils.cutout_saver import CutoutSaver
 from ripple.data_access import LsstDataFetcher
+from ripple.preprocessing import Preprocessor, CutoutCreator, PreprocessingConfig
 from typing import Any, Dict, Optional, List, Tuple
 
 class PreprocessingStage(PipelineStage):
@@ -54,18 +55,17 @@ class PreprocessingStage(PipelineStage):
         """
         Logger.info("Executing Preprocessing Stage")
 
-        # Initialize data fetcher if we have RSP client from previous stage
-        if data and isinstance(data, dict) and data.get('rsp_tap_client'):
+        # Initialize a data fetcher for BOTH backends (RSP server or local
+        # Butler / data_folder). The local-Butler path was previously
+        # unreachable because it was gated on the presence of an RSP client.
+        if data and isinstance(data, dict):
             try:
-                # Get data source configuration from previous stage
-                data_source_config = data.get('data_source_config', {})
                 Logger.info("Initializing data fetcher for cutout extraction")
-
-                # Create LsstDataFetcher for extracting cutouts
-                Logger.info(f"Creating LsstDataFetcher with config: {data_source_config}")
-                self.data_fetcher = LsstDataFetcher(data_source_config)
-                Logger.info("✓ Data fetcher initialized for cutout extraction")
-
+                self.data_fetcher = self._build_data_fetcher(data)
+                if self.data_fetcher is not None:
+                    Logger.info("✓ Data fetcher initialized for cutout extraction")
+                else:
+                    Logger.info("No data fetcher available for this configuration")
             except Exception as e:
                 Logger.error(f"Failed to initialize data fetcher: {e}")
                 return data
@@ -109,6 +109,52 @@ class PreprocessingStage(PipelineStage):
         
         Logger.success("✓ Preprocessing Stage completed")
         return data
+
+    def _build_data_fetcher(self, data: Dict[str, Any]) -> Optional[LsstDataFetcher]:
+        """Build an LsstDataFetcher for the active backend.
+
+        Returns an RSP-aware fetcher when the previous stage provided an
+        ``rsp_tap_client`` (reusing that already-authenticated client), and
+        otherwise constructs a fetcher from ``data_source_config`` for the
+        local butler_repo / data_folder configuration. This makes both the
+        remote-RSP and local-Butler paths reachable from a single entry point.
+        """
+        data_source_config = data.get('data_source_config', {})
+
+        # NOTE: for a ``butler_server`` config, LsstDataFetcher.__init__ will
+        # attempt its own RSP client initialization here (and may emit a
+        # spurious connection error in the log) before we override it below.
+        # The explicit ``fetcher.rsp_tap_client = ...`` override always wins, so
+        # the upstream, already-authenticated client is the one actually used.
+        Logger.info(f"Creating LsstDataFetcher with config: {data_source_config}")
+        fetcher = LsstDataFetcher(data_source_config)
+
+        # Reuse the RSP client already built (and authenticated) upstream so we
+        # do not re-create the remote connection in the preprocessing stage.
+        rsp_tap_client = data.get('rsp_tap_client')
+        if rsp_tap_client is not None:
+            Logger.info("Reusing RSP TAP client provided by the data source stage")
+            fetcher.rsp_tap_client = rsp_tap_client
+
+        return fetcher
+
+    def _collect_coordinates(self, data: Any) -> List[Dict[str, Any]]:
+        """Collect the coordinate list from the pipeline data dict.
+
+        Supports both shapes seen in the pipeline contract:
+        ``data['coordinates']`` and the nested
+        ``data['data_source_config']['extraction']['coordinates']``.
+        """
+        if not isinstance(data, dict):
+            return []
+
+        coordinates = data.get('coordinates')
+        if coordinates:
+            return coordinates
+
+        data_source_config = data.get('data_source_config', {})
+        extraction_config = data_source_config.get('extraction', {})
+        return extraction_config.get('coordinates', [])
 
     # Private helper methods for preprocessing steps
     def _clean_data(self, data: Any, params: Dict[str, Any]) -> Any:
@@ -189,19 +235,26 @@ class PreprocessingStage(PipelineStage):
             return data
 
     def _create_cutouts(self, data: Any, params: Dict[str, Any]) -> Any:
-        """Create 64x64 cutouts from coordinates using data fetcher."""
+        """Create cutouts and delegate the cutout->tensor work to Preprocessor.
+
+        Extraction happens exactly once, here, via CutoutCreator (removing the
+        duplicate fetch+save that previously overlapped with
+        DataSourceStage._perform_immediate_extraction). The Preprocessor turns
+        the per-coordinate band dicts into a dense tensor plus a manifest, which
+        are placed back into the returned data dict alongside the legacy
+        ``extraction_results`` so downstream steps keep working.
+        """
         if self.data_fetcher is None:
             Logger.error("Data fetcher not initialized - cannot create cutouts")
             return data
 
         try:
-            # Get coordinates from data source config
-            data_source_config = data.get('data_source_config', {}) if isinstance(data, dict) else {}
-            extraction_config = data_source_config.get('extraction', {})
-            coordinates = extraction_config.get('coordinates', [])
-            bands = params.get('bands', ['g', 'r', 'i'])
-            size_arcsec = params.get('size_arcsec', 12.8)
+            # Build the preprocessing configuration from the stage params so the
+            # tensor side (size, bands, normalization, ...) is config-driven.
+            config = PreprocessingConfig.from_dict(params)
+            bands = list(config.bands)
 
+            coordinates = self._collect_coordinates(data)
             Logger.info(f"Extracting cutouts for {len(coordinates)} coordinates in bands {bands}")
 
             if not coordinates:
@@ -212,73 +265,56 @@ class PreprocessingStage(PipelineStage):
                     {'ra': 61.5, 'dec': -36.8, 'label': 'test_002'}
                 ]
 
-            # Extract cutouts for each coordinate
+            # Single extraction: CutoutCreator forwards each coordinate to the
+            # shared data_fetcher.get_multi_band_cutout call.
+            cutout_creator = CutoutCreator(self.data_fetcher, config)
+
             extraction_results = []
+            items = []
             for i, coord in enumerate(coordinates):
+                ra = coord.get('ra', 0.0)
+                dec = coord.get('dec', 0.0)
+                label = coord.get('label', f'coord_{i+1:03d}')
+
+                Logger.info(f"Extracting cutout {i+1}/{len(coordinates)}: RA={ra:.3f}, Dec={dec:.3f}")
+
                 try:
-                    ra = coord.get('ra', 0.0)
-                    dec = coord.get('dec', 0.0)
-                    label = coord.get('label', f'coord_{i+1:03d}')
-
-                    Logger.info(f"Extracting cutout {i+1}/{len(coordinates)}: RA={ra:.3f}, Dec={dec:.3f}")
-
-                    # Get multi-band cutout using data fetcher
-                    cutouts = self.data_fetcher.get_multi_band_cutout(
-                        ra=ra,
-                        dec=dec,
-                        size_arcsec=size_arcsec,
-                        bands=bands
-                    )
-
-                    extraction_result = {
-                        'ra': ra,
-                        'dec': dec,
-                        'label': label,
-                        'cutout': cutouts,
-                        'status': 'success',
-                        'error': None
-                    }
-
-                    extraction_results.append(extraction_result)
+                    cutouts = cutout_creator.create(ra, dec)
+                    extraction_results.append({
+                        'ra': ra, 'dec': dec, 'label': label,
+                        'cutout': cutouts, 'status': 'success', 'error': None
+                    })
+                    items.append({
+                        'bands': cutouts,
+                        'meta': {'ra': ra, 'dec': dec, 'label': label},
+                    })
                     Logger.info(f"✓ Successfully extracted cutout {i+1}/{len(coordinates)}")
-
                 except Exception as e:
                     Logger.error(f"Failed to extract cutout {i+1}: {e}")
-                    extraction_result = {
-                        'ra': coord.get('ra', 0.0),
-                        'dec': coord.get('dec', 0.0),
-                        'label': coord.get('label', f'coord_{i+1:03d}'),
-                        'cutout': None,
-                        'status': 'error',
-                        'error': str(e)
-                    }
-                    extraction_results.append(extraction_result)
+                    extraction_results.append({
+                        'ra': ra, 'dec': dec, 'label': label,
+                        'cutout': None, 'status': 'error', 'error': str(e)
+                    })
 
-            # Prepare summary
             successful = sum(1 for r in extraction_results if r['status'] == 'success')
             Logger.info(f"Cutout extraction summary: {successful}/{len(extraction_results)} successful")
 
-            # Save cutouts immediately since RGB composites might not be processed
-            if self.cutout_saver is not None:
-                saved_count = 0
-                for result in extraction_results:
-                    if result['status'] == 'success':
-                        try:
-                            saved_files = self._save_single_composite(result)
-                            if saved_files:
-                                saved_count += 1
-                                Logger.info(f"✓ Saved cutout for {result.get('label', 'unknown')}: {list(saved_files.keys())}")
-                        except Exception as e:
-                            Logger.error(f"Failed to save cutout for {result.get('label', 'unknown')}: {e}")
-                Logger.info(f"Individual band cutouts saved: {saved_count}/{len(extraction_results)} successful")
-            else:
-                Logger.warning("Cutout saver not available - cutouts not saved to disk")
+            # Delegate cutout->tensor conversion + manifest to the Preprocessor.
+            out_dir = self.cutout_saver.get_output_directory() if self.cutout_saver is not None else None
+            Logger.info(f"Delegating {len(items)} cutouts to Preprocessor (out_dir={out_dir})")
+            preprocessor = Preprocessor(config)
+            result = preprocessor.run(items, out_dir=out_dir)
+            Logger.info(
+                f"Preprocessor accepted {len(result.accepted_indices)}/{len(items)} cutouts"
+            )
 
-            # Return data for next stage (will be used by rgb_composite step)
+            # Return data for next stage (will be used by rgb_composite step).
             return {
                 'extraction_results': extraction_results,
                 'total_coordinates': len(coordinates),
                 'successful_extractions': successful,
+                'tensor': result.tensor,
+                'preprocess_manifest': result.manifest,
                 'status': 'completed'
             }
 
@@ -366,7 +402,13 @@ class PreprocessingStage(PipelineStage):
                 Logger.info(f"Processing {len(extraction_results)} extraction results for RGB composites")
 
                 rgb_params = self.preprocessing_params.get('rgb_composite', {})
-                mapping = rgb_params.get('mapping', {'R': 'r', 'G': 'g', 'B': 'i'})
+                # Default to the canonical RGB band order (i->R, r->G, g->B),
+                # derived from CutoutSaver.RGB_BAND_ORDER so the in-memory path
+                # and the on-disk composite never diverge.
+                red_band, green_band, blue_band = CutoutSaver.RGB_BAND_ORDER
+                mapping = rgb_params.get(
+                    'mapping', {'R': red_band, 'G': green_band, 'B': blue_band}
+                )
                 stretch_method = rgb_params.get('stretch_method', 'asinh')
                 clip_percentiles = rgb_params.get('clip_percentiles', [1, 99])
 
