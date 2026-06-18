@@ -4,7 +4,9 @@ data/pipelines_check-29.1.1/
 data/testdata_decam/
 data/rc2_subset/
 data/lsstdesc-public/
-data/ 
+# Root-anchored so it ignores the repo-root data/ download dir WITHOUT also
+# ignoring the source packages ripple/data/ and ripple/tests/data/.
+/data/
 
 # Other data directories
 lsst_stack/
