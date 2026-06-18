@@ -5,5 +5,7 @@ lazily inside ``fetch()`` so the package and its DATASETS table stay usable offl
 """
 from .exceptions import DataFetchError
 from .fetch import DATASETS, fetch, main
+from .ingest_deeplense import main as ingest_main
 
-__all__ = ["DataFetchError", "DATASETS", "fetch", "main"]
+__all__ = ["DataFetchError", "DATASETS", "fetch", "main", "ingest_main"]
+
