@@ -149,3 +149,80 @@ def test_modelconfig_resolve_device_auto_cpu_when_torch_absent(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     assert ModelConfig(device="auto").resolve_device() == "cpu"
+
+
+# --------------------------- TrainerConfig ---------------------------
+
+def test_trainerconfig_defaults():
+    t = TrainerConfig()
+    assert t.task == "binary"
+    assert t.num_classes == 2
+    assert t.epochs == 30
+    assert t.batch_size == 64
+    assert t.lr == pytest.approx(3e-4)
+    assert t.weight_decay == pytest.approx(1e-4)
+    assert t.optimizer == "adamw"
+    assert t.imbalance == "pos_weight"
+    assert t.early_stopping is True
+    assert t.patience == 5
+    assert t.monitor == "val_auc"
+    assert t.min_delta == 0.0
+    assert t.grad_clip_norm is None
+    assert t.amp is False
+    assert t.seed == 0
+    assert t.device is None
+    assert t.num_workers == 0
+    assert t.log_every == 0
+
+
+def test_trainerconfig_is_frozen():
+    t = TrainerConfig()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        t.epochs = 5
+
+
+def test_trainerconfig_post_init_rejects_bad_task():
+    with pytest.raises(ModelConfigError):
+        TrainerConfig(task="regression")
+
+
+def test_trainerconfig_post_init_rejects_bad_optimizer():
+    with pytest.raises(ModelConfigError):
+        TrainerConfig(optimizer="rmsprop")
+
+
+def test_trainerconfig_post_init_rejects_bad_imbalance():
+    with pytest.raises(ModelConfigError):
+        TrainerConfig(imbalance="oversample")
+
+
+def test_trainerconfig_post_init_accepts_valid_imbalance_modes():
+    for mode in ("pos_weight", "weighted_sampler", "none"):
+        assert TrainerConfig(imbalance=mode).imbalance == mode
+
+
+def test_trainerconfig_from_dict_none_returns_defaults():
+    assert TrainerConfig.from_dict(None) == TrainerConfig()
+
+
+def test_trainerconfig_from_dict_ignores_unknown_keys():
+    t = TrainerConfig.from_dict({"epochs": 7, "bogus": "x", "lr": 1e-3})
+    assert t.epochs == 7
+    assert t.lr == pytest.approx(1e-3)
+
+
+def test_trainerconfig_resolve_device_none_is_auto(monkeypatch):
+    import sys
+    import types
+
+    fake = types.ModuleType("torch")
+    fake.cuda = types.SimpleNamespace(is_available=lambda: False)
+    fake.backends = types.SimpleNamespace(
+        mps=types.SimpleNamespace(is_available=lambda: False)
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake)
+    assert TrainerConfig(device=None).resolve_device() == "cpu"
+
+
+def test_trainerconfig_resolve_device_explicit_passthrough():
+    assert TrainerConfig(device="cpu").resolve_device() == "cpu"
