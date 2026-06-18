@@ -157,3 +157,77 @@ def test_fit_no_val_default_monitor_falls_back_to_train_loss_minimize():
     # best_metric tracks the LOWEST train_loss (minimize direction).
     assert hist.best_metric == pytest.approx(min(losses))
     assert hist.best_epoch == len(losses) - 1
+
+
+@pytest.mark.torch
+def test_checkpoint_round_trip_identical_logits(tmp_path):
+    pytest.importorskip("torch")
+    import torch
+    from ripple.models.config import TrainerConfig
+    from ripple.models.model_trainer import ModelTrainer
+
+    torch.manual_seed(0)
+    net = _tiny_binary_net()
+    cfg = TrainerConfig(task="binary", epochs=2, lr=0.05, early_stopping=False,
+                        device="cpu", seed=0)
+    trainer = ModelTrainer(cfg)
+    hist = trainer.fit(net, _tiny_loader(labels="balanced", seed=6))
+
+    ckpt_path = tmp_path / "model.pt"
+    trainer.save_checkpoint(str(ckpt_path), net,
+                            metrics={"auc": 0.9}, history=hist)
+    assert ckpt_path.exists()
+
+    loaded = trainer.load_checkpoint(str(ckpt_path))
+    assert loaded["format_version"] == 1
+    assert loaded["task"] == "binary"
+    assert loaded["input_size"] == cfg.__dict__.get("input_size", 64) or 64
+
+    fresh = _tiny_binary_net()
+    fresh.load_state_dict(loaded["state_dict"])
+
+    x = torch.randn(5, 3, 8, 8, generator=torch.Generator().manual_seed(99))
+    net.eval()
+    fresh.eval()
+    with torch.no_grad():
+        a = net(x)
+        b = fresh(x)
+    assert torch.allclose(a, b, atol=1e-6)
+
+
+@pytest.mark.torch
+def test_load_checkpoint_wrong_input_size_raises(tmp_path):
+    pytest.importorskip("torch")
+    import torch
+    from ripple.models.config import TrainerConfig
+    from ripple.models.exceptions import CheckpointError
+    from ripple.models.model_trainer import ModelTrainer
+
+    net = _tiny_binary_net()
+    saver = ModelTrainer(TrainerConfig(task="binary", device="cpu"))
+    ckpt_path = tmp_path / "wrong_size.pt"
+    saver.save_checkpoint(str(ckpt_path), net)
+
+    # Corrupt the persisted input_size, then load with the default-expecting trainer.
+    raw = torch.load(str(ckpt_path), weights_only=False)
+    raw["input_size"] = 999
+    torch.save(raw, str(ckpt_path))
+
+    with pytest.raises(CheckpointError):
+        ModelTrainer(TrainerConfig(task="binary", device="cpu")).load_checkpoint(
+            str(ckpt_path))
+
+
+@pytest.mark.torch
+def test_load_checkpoint_missing_format_version_raises(tmp_path):
+    pytest.importorskip("torch")
+    import torch
+    from ripple.models.config import TrainerConfig
+    from ripple.models.exceptions import CheckpointError
+    from ripple.models.model_trainer import ModelTrainer
+
+    bad = tmp_path / "bad.pt"
+    torch.save({"state_dict": {}, "task": "binary", "input_size": 64}, str(bad))
+    with pytest.raises(CheckpointError):
+        ModelTrainer(TrainerConfig(task="binary", device="cpu")).load_checkpoint(
+            str(bad))

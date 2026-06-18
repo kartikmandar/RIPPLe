@@ -212,3 +212,95 @@ class ModelTrainer:
         return History(epochs=epochs, best_epoch=best_epoch,
                        best_metric=best_metric, best_state_dict=best_state)
 
+    # ------------------------------------------------------------------
+    # Checkpoint serialisation
+    # ------------------------------------------------------------------
+
+    FORMAT_VERSION = 1
+
+    def _model_meta(self, model):
+        cfg = getattr(model, "config", None)
+        model_type = getattr(cfg, "model_type", None) or "unknown"
+        task = getattr(cfg, "task", None) or self.config.task
+        classes = list(getattr(cfg, "class_names", ()) or ())
+        input_size = getattr(cfg, "input_size", None) or 64
+        norm = bool(getattr(cfg, "apply_imagenet_norm", False))
+        return model_type, task, classes, input_size, norm
+
+    def save_checkpoint(self, path, model, *, metrics=None, history=None):
+        """Serialise *model* weights plus metadata to *path*.
+
+        All values stored in the checkpoint dict are plain JSON-safe types
+        (str, int, float, list, dict) plus PyTorch tensors — no custom class
+        instances are pickled.  This allows ``load_checkpoint`` to call
+        ``torch.load(..., weights_only=False)`` safely with our own trusted
+        checkpoints while remaining portable across RIPPLe versions.
+        """
+        import dataclasses
+        import datetime
+
+        import torch
+        net = self._unwrap(model)
+        model_type, task, classes, input_size, norm = self._model_meta(model)
+        hist_payload = None
+        if history is not None:
+            hist_payload = {
+                "epochs": history.epochs,
+                "best_epoch": history.best_epoch,
+                "best_metric": history.best_metric,
+            }
+        ckpt = {
+            "format_version": self.FORMAT_VERSION,
+            "state_dict": {k: v.detach().cpu()
+                           for k, v in net.state_dict().items()},
+            "model_type": model_type,
+            "task": task,
+            "classes": classes,
+            "input_size": int(input_size),
+            "norm": norm,
+            "trainer_config": dataclasses.asdict(self.config),
+            "metrics": dict(metrics) if metrics else {},
+            "history": hist_payload,
+            "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "torch_version": torch.__version__,
+        }
+        torch.save(ckpt, path)
+
+    def load_checkpoint(self, path):
+        """Load and validate a checkpoint written by :meth:`save_checkpoint`.
+
+        Validates ``format_version``, ``task``, and ``input_size`` against
+        the trainer's own ``TrainerConfig``.  Raises ``CheckpointError`` on
+        any mismatch or structural problem.
+
+        ``weights_only=False`` is used intentionally: the checkpoint dict
+        contains only plain types + tensors that *we* serialised, so it is
+        safe to unpickle from our own trusted checkpoints.
+        """
+        from ripple.models.exceptions import CheckpointError
+
+        import torch
+        try:
+            ckpt = torch.load(path, weights_only=False)
+        except Exception as exc:  # noqa: BLE001 — re-raised as CheckpointError
+            raise CheckpointError(
+                f"failed to read checkpoint {path!r}: {exc}") from exc
+        if not isinstance(ckpt, dict):
+            raise CheckpointError(f"checkpoint {path!r} is not a dict")
+        if ckpt.get("format_version") != self.FORMAT_VERSION:
+            raise CheckpointError(
+                f"unsupported format_version {ckpt.get('format_version')!r} "
+                f"(expected {self.FORMAT_VERSION})")
+        if "state_dict" not in ckpt:
+            raise CheckpointError(f"checkpoint {path!r} missing state_dict")
+        expected_task = self.config.task
+        if ckpt.get("task") != expected_task:
+            raise CheckpointError(
+                f"task mismatch: checkpoint {ckpt.get('task')!r} != "
+                f"trainer {expected_task!r}")
+        expected_size = int(getattr(self.config, "input_size", 64) or 64)
+        if ckpt.get("input_size") != expected_size:
+            raise CheckpointError(
+                f"input_size mismatch: checkpoint {ckpt.get('input_size')!r} != "
+                f"expected {expected_size}")
+        return ckpt
