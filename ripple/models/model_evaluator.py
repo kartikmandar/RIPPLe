@@ -116,6 +116,71 @@ class ModelEvaluator:
         }
 
     def _evaluate_multiclass(self, y_true, y_score, threshold):
-        raise NotImplementedError(
-            "Multiclass evaluation is handled by Task 14."
+        import numpy as np
+        from sklearn.metrics import (
+            accuracy_score,
+            confusion_matrix,
+            f1_score,
+            precision_recall_fscore_support,
+            precision_score,
+            recall_score,
+            roc_auc_score,
         )
+
+        num_classes = y_score.shape[1] if y_score.ndim == 2 else 0
+        labels = list(range(num_classes))
+        y_pred = y_score.argmax(axis=1).astype(np.int64)
+
+        try:
+            auc = float(
+                roc_auc_score(
+                    y_true,
+                    y_score,
+                    multi_class="ovr",
+                    average="macro",
+                    labels=labels,
+                )
+            )
+        except ValueError:
+            auc = float("nan")
+
+        cm = confusion_matrix(y_true, y_pred, labels=labels)
+        prec, rec, f1, _ = precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            labels=labels,
+            zero_division=0,
+        )
+        per_class = [
+            {
+                "precision": float(prec[i]),
+                "recall": float(rec[i]),
+                "f1": float(f1[i]),
+            }
+            for i in range(num_classes)
+        ]
+        return {
+            "auc": auc,
+            "accuracy": float(accuracy_score(y_true, y_pred)),
+            "precision": float(
+                precision_score(
+                    y_true, y_pred, labels=labels,
+                    average="macro", zero_division=0,
+                )
+            ),
+            "recall": float(
+                recall_score(
+                    y_true, y_pred, labels=labels,
+                    average="macro", zero_division=0,
+                )
+            ),
+            "f1": float(
+                f1_score(
+                    y_true, y_pred, labels=labels,
+                    average="macro", zero_division=0,
+                )
+            ),
+            "confusion_matrix": cm.tolist(),
+            "threshold": float(threshold),
+            "per_class": per_class,
+        }
