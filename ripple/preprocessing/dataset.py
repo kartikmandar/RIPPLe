@@ -112,8 +112,11 @@ def make_dataloader(dataset, batch_size=32, shuffle=True, num_workers=0, seed=0)
     # DataLoader accepts any map-style object with __len__/__getitem__; no Dataset subclass needed.
     g = torch.Generator()
     g.manual_seed(seed)
+    # pin_memory only benefits CUDA host->device copies; gating on CUDA
+    # availability silences the MPS/CPU "pin_memory not supported" warning.
+    pin_memory = torch.cuda.is_available()
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle,
-                      num_workers=num_workers, pin_memory=True,
+                      num_workers=num_workers, pin_memory=pin_memory,
                       worker_init_fn=seed_worker if num_workers > 0 else None,
                       generator=g,
                       persistent_workers=num_workers > 0)
