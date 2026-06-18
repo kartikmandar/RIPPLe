@@ -26,3 +26,9 @@ include = ["ripple*"]
 
 [tool.pytest.ini_options]
 testpaths = ["ripple/tests"]
+markers = [
+    "lsst: tests requiring the LSST science pipelines stack",
+    "torch: tests requiring PyTorch",
+    "integration: real-data end-to-end tests",
+    "perf: performance/timing benchmarks",
+]
