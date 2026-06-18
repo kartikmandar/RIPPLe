@@ -63,13 +63,156 @@ class ModelInterface(ABC):
         pass
 
 class BaseModel(ModelInterface):
+    """Concrete torch wrapper around an EncoderHeadNet built via components.build_net.
+
+    torch is imported lazily inside the methods that need it so the module
+    imports cleanly with torch absent. The underlying nn.Module is built on
+    first use (_build); the resolved device string is cached lazily.
     """
-    A placeholder for the Base Model.
-    This class will be implemented in a later phase.
-    """
-    def __init__(self, config=None):
+
+    def __init__(self, config):
         self.config = config
-    
+        self._net = None
+        self._device = None
+
+    # -- lazy build / device -------------------------------------------------
+
+    def _build(self):
+        if self._net is not None:
+            return
+        from ripple.models.components import build_net
+        self._net = build_net(self.config)
+
+    @property
+    def _resolved_device(self):
+        if self._device is None:
+            self._device = self.config.resolve_device()
+        return self._device
+
+    # -- tensor path ---------------------------------------------------------
+
+    def forward_logits(self, x):
+        self._build()
+        return self._net(x)
+
+    def predict_logits(self, x):
+        import torch
+
+        self._build()
+        self._net.eval()
+        with torch.no_grad():
+            return self._net(x)
+
+    # -- structured path -----------------------------------------------------
+
+    def postprocess(self, logits):
+        import torch
+
+        task = self.config.task
+        class_names = list(self.config.class_names)
+        results = []
+        if task == "binary":
+            # head emits ONE logit per row; sigmoid -> P(lens).
+            logits = logits.reshape(logits.shape[0], -1)
+            p_lens = torch.sigmoid(logits[:, 0])
+            neg_name = class_names[0] if len(class_names) > 0 else "non_lens"
+            pos_name = class_names[1] if len(class_names) > 1 else "lens"
+            for i in range(p_lens.shape[0]):
+                pl = float(p_lens[i].item())
+                pn = 1.0 - pl
+                pred = 1 if pl >= 0.5 else 0
+                conf = pl if pred == 1 else pn
+                results.append(PredictionResult(
+                    task="binary",
+                    pred_class=pred,
+                    class_name=pos_name if pred == 1 else neg_name,
+                    score=pl,
+                    probabilities={neg_name: pn, pos_name: pl},
+                    confidence=conf,
+                ))
+        else:
+            probs = torch.softmax(logits, dim=1)
+            n = probs.shape[1]
+            names = class_names if len(class_names) == n else [str(j) for j in range(n)]
+            for i in range(probs.shape[0]):
+                row = probs[i]
+                top = int(torch.argmax(row).item())
+                conf = float(row[top].item())
+                results.append(PredictionResult(
+                    task=task,
+                    pred_class=top,
+                    class_name=names[top],
+                    score=conf,
+                    probabilities={names[j]: float(row[j].item()) for j in range(n)},
+                    confidence=conf,
+                ))
+        return results
+
     def predict(self, data):
-        """Placeholder implementation of predict method."""
-        raise NotImplementedError("Predict method not implemented yet")
+        import torch
+
+        if not torch.is_tensor(data):
+            data = torch.as_tensor(data, dtype=torch.float32)
+        if data.dim() == 3:
+            logits = self.predict_logits(data.unsqueeze(0))
+            return self.postprocess(logits)[0]
+        logits = self.predict_logits(data)
+        return self.postprocess(logits)
+
+    def predict_batch(self, tensor, *, batch_size=32, device=None):
+        import torch
+
+        self._build()
+        if not torch.is_tensor(tensor):
+            tensor = torch.as_tensor(tensor, dtype=torch.float32)
+        dev = device or self._resolved_device
+        self._net.to(dev)
+        self._net.eval()
+        rows = []
+        n = tensor.shape[0]
+        with torch.no_grad():
+            for start in range(0, n, batch_size):
+                chunk = tensor[start:start + batch_size].to(dev)
+                logits = self._net(chunk).cpu()
+                for result in self.postprocess(logits):
+                    rows.append(result.to_dict())
+        return rows
+
+    # -- weights / device / introspection ------------------------------------
+
+    def load_weights(self, path):
+        import torch
+        from ripple.models.exceptions import ModelLoadError
+
+        self._build()
+        try:
+            state = torch.load(path, map_location="cpu", weights_only=True)
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+            self._net.load_state_dict(state, strict=True)
+        except Exception as exc:
+            raise ModelLoadError(
+                "failed to load weights from {!r}: {}".format(path, exc)
+            ) from exc
+
+    def to(self, device):
+        self._build()
+        self._net.to(device)
+        self._device = device
+        return self
+
+    def eval(self):
+        self._build()
+        self._net.eval()
+        return self
+
+    @property
+    def model_info(self):
+        return {
+            "type": getattr(self.config, "model_type", None),
+            "task": getattr(self.config, "task", None),
+            "encoder": getattr(self.config, "encoder", None),
+            "num_classes": getattr(self.config, "num_classes", None),
+            "device": self._device,
+            "loaded": self._net is not None,
+        }
