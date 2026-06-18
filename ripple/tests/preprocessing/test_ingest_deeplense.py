@@ -71,3 +71,90 @@ def test_ingest_binary_manifest_and_roundtrip(tmp_path):
     assert xb.dtype.__str__() == "torch.float32"
     assert yb.dtype.__str__() == "torch.int64"
     assert set(yb.tolist()).issubset({0, 1})
+
+
+# ---------------------------------------------------------------------------
+# 3-class (no_sub / cdm / axion) tests — Task 24
+# ---------------------------------------------------------------------------
+
+def _make_3class_fixture(root, per_class=6):
+    for cls in ("no_sub", "cdm", "axion"):
+        d = os.path.join(root, cls)
+        os.makedirs(d, exist_ok=True)
+        for k in range(per_class):
+            np.save(os.path.join(d, f"{cls}_{k}.npy"),
+                    np.random.rand(1, 8, 8).astype(np.float32))
+
+
+def test_ingest_3class_label_map_and_channels(tmp_path):
+    src = tmp_path / "src3"
+    out = tmp_path / "out3"
+    _make_3class_fixture(str(src))
+
+    manifest_path = ingest_deeplense_dataset(str(src), str(out), val_fraction=0.5, seed=0)
+    rows = read_manifest(manifest_path)
+    assert rows
+
+    label_for = {"no_sub": 0, "cdm": 1, "axion": 2}
+    for r in rows:
+        assert r["channels"] == 3
+        # robust: recover class from the stem prefix
+        stem = os.path.basename(r["path"])
+        cls = next(c for c in label_for if stem.startswith(c))
+        assert r["label"] == label_for[cls]
+
+    arr = np.load(rows[0]["path"])
+    assert arr.shape == (3, 8, 8)
+
+    ds = RippleCutoutDataset(manifest_path, split="train")
+    assert len(ds) > 0
+    x, y = ds[0]
+    assert tuple(x.shape) == (3, 8, 8)
+    assert int(y) in (0, 1, 2)
+
+
+def test_ingest_3class_distinct_labels(tmp_path):
+    """All three class labels {0, 1, 2} must appear in the manifest."""
+    src = tmp_path / "src3b"
+    out = tmp_path / "out3b"
+    _make_3class_fixture(str(src), per_class=6)
+
+    manifest_path = ingest_deeplense_dataset(str(src), str(out), val_fraction=0.3, seed=42)
+    rows = read_manifest(manifest_path)
+
+    labels_found = {r["label"] for r in rows}
+    assert labels_found == {0, 1, 2}, f"expected {{0,1,2}}, got {labels_found}"
+
+
+def test_ingest_3class_splits_present(tmp_path):
+    """train/val/test splits must all appear; no group leaks train<->val."""
+    src = tmp_path / "src3c"
+    out = tmp_path / "out3c"
+    _make_3class_fixture(str(src), per_class=6)
+
+    manifest_path = ingest_deeplense_dataset(str(src), str(out), val_fraction=0.5, seed=7)
+    rows = read_manifest(manifest_path)
+
+    splits = {r["split"] for r in rows}
+    assert {"train", "val", "test"}.issubset(splits), f"missing splits: {splits}"
+
+    by_group = {}
+    for r in rows:
+        by_group.setdefault(r["group_key"], set()).add(r["split"])
+    for grp, sset in by_group.items():
+        assert not ({"train", "val"}.issubset(sset)), f"group {grp!r} leaks train<->val"
+
+
+def test_ingest_3class_no_regression_binary(tmp_path):
+    """Binary path must remain unaffected when src has train_lenses/train_nonlenses layout."""
+    src = tmp_path / "srcbin"
+    out = tmp_path / "outbin"
+    _make_binary_fixture(str(src))
+
+    manifest_path = ingest_deeplense_dataset(str(src), str(out), val_fraction=0.5, seed=0)
+    rows = read_manifest(manifest_path)
+
+    labels_found = {r["label"] for r in rows}
+    assert labels_found == {0, 1}, f"binary path should produce labels {{0,1}}, got {labels_found}"
+    for r in rows:
+        assert r["channels"] == 3

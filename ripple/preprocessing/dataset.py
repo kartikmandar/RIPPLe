@@ -142,18 +142,53 @@ def _carve_val_from_train(rows, val_fraction, seed, group_key="group_key"):
     return rows
 
 
+_THREECLASS_LABELS = {"no_sub": 0, "cdm": 1, "axion": 2}
+
+
+def _is_threeclass_root(src_root):
+    src_root = str(src_root)
+    names = {n for n in os.listdir(src_root)
+             if os.path.isdir(os.path.join(src_root, n))}
+    return bool(names) and names.issubset(set(_THREECLASS_LABELS))
+
+
+def _crawl_threeclass(src_root):
+    """Crawl no_sub/cdm/axion folders -> rows with label map and split='train' (carved later)."""
+    src_root = str(src_root)
+    rows = []
+    for cls in sorted(os.listdir(src_root)):
+        sub = os.path.join(src_root, cls)
+        if not os.path.isdir(sub) or cls not in _THREECLASS_LABELS:
+            continue
+        for fn in sorted(os.listdir(sub)):
+            if fn.endswith(".npy"):
+                rows.append({"path": os.path.join(sub, fn),
+                             "label": _THREECLASS_LABELS[cls],
+                             "split": "train",
+                             "group_key": cls})
+    return rows
+
+
 def ingest_deeplense_dataset(src_root, out_dir, *, val_fraction=0.1,
                              copy_arrays=True, band_order="g,r,i", seed=0):
     """Convert a DeepLense class-folder dataset into a RIPPLe manifest + cutouts.
 
-    Crawls ``{train,test}_{lenses,nonlenses}/`` of per-object ``.npy`` via
-    ``ingest_labels_from_dirs`` (lens=1, non-lens=0), adds the fields
-    ``RippleCutoutDataset`` requires (contiguous ``index``, ``status='accepted'``,
-    ``channels=3``, ``size_px``, ``split``, leakage-safe ``group_key``), optionally
-    copies each array into ``out_dir/cutouts``, and writes ``out_dir/manifest.csv``.
+    Supports two source layouts:
 
-    Test dirs are pinned to split='test'; val_fraction is carved (group-coherent)
-    out of the train groups. Returns the manifest.csv path.
+    * Binary (Task 23): ``{train,test}_{lenses,nonlenses}/`` per-object ``.npy``
+      via ``ingest_labels_from_dirs`` (lens=1, non-lens=0).  Test dirs are pinned
+      to split='test'; val_fraction is carved (group-coherent) from train groups.
+
+    * 3-class (Task 24): ``{no_sub,cdm,axion}/`` per-object single-channel ``.npy``
+      (auto-detected when the only subdirs are exactly that set).  Labels are mapped
+      {no_sub:0, cdm:1, axion:2}; single-channel arrays are replicated 1->3; a
+      deterministic 15 % test holdout is carved per class before the val carve.
+
+    In both cases the function adds ``RippleCutoutDataset``-required fields
+    (contiguous ``index``, ``status='accepted'``, ``channels=3``, ``size_px``,
+    ``split``, leakage-safe ``group_key``), optionally copies arrays into
+    ``out_dir/cutouts``, and writes ``out_dir/manifest.csv``.  Returns the
+    manifest.csv path.
     """
     out_dir = str(out_dir)
     os.makedirs(out_dir, exist_ok=True)
@@ -161,7 +196,12 @@ def ingest_deeplense_dataset(src_root, out_dir, *, val_fraction=0.1,
     if copy_arrays:
         os.makedirs(cutouts_dir, exist_ok=True)
 
-    rows = ingest_labels_from_dirs(src_root)
+    if _is_threeclass_root(src_root):
+        rows = _crawl_threeclass(src_root)
+        threeclass = True
+    else:
+        rows = ingest_labels_from_dirs(src_root)
+        threeclass = False
     if not rows:
         raise ValueError(f"No .npy class folders found under {src_root!r}")
 
@@ -198,6 +238,19 @@ def ingest_deeplense_dataset(src_root, out_dir, *, val_fraction=0.1,
             "band_order": band_order,
         })
 
+    if threeclass:
+        # 3-class source has no test dirs: carve a deterministic test holdout per class,
+        # then carve val out of the remaining train groups (both group-coherent).
+        rng = random.Random(seed)
+        by_label = defaultdict(list)
+        for r in out_rows:
+            by_label[r["label"]].append(r)
+        for _label, group in by_label.items():
+            group_sorted = sorted(group, key=lambda r: r["group_key"])
+            rng.shuffle(group_sorted)
+            n_test = max(1, int(round(0.15 * len(group_sorted)))) if len(group_sorted) > 2 else 0
+            for r in group_sorted[:n_test]:
+                r["split"] = "test"
     _carve_val_from_train(out_rows, val_fraction, seed)
 
     for i, r in enumerate(out_rows):
