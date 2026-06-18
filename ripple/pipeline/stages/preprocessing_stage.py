@@ -1,3 +1,5 @@
+import numpy as np
+
 from ripple.utils.logger import Logger
 from ripple.pipeline.pipeline_stage import PipelineStage
 from ripple.utils.cutout_saver import CutoutSaver
@@ -278,6 +280,10 @@ class PreprocessingStage(PipelineStage):
 
                 Logger.info(f"Extracting cutout {i+1}/{len(coordinates)}: RA={ra:.3f}, Dec={dec:.3f}")
 
+                # Always append an item for every coordinate (success or failure)
+                # so that Preprocessor.run produces exactly one manifest row per
+                # requested coordinate and row["index"] equals the original
+                # coordinate position i.
                 try:
                     cutouts = cutout_creator.create(ra, dec)
                     extraction_results.append({
@@ -286,7 +292,7 @@ class PreprocessingStage(PipelineStage):
                     })
                     items.append({
                         'bands': cutouts,
-                        'meta': {'ra': ra, 'dec': dec, 'label': label},
+                        'meta': {'index': i, 'ra': ra, 'dec': dec, 'label': label},
                     })
                     Logger.info(f"✓ Successfully extracted cutout {i+1}/{len(coordinates)}")
                 except Exception as e:
@@ -294,6 +300,15 @@ class PreprocessingStage(PipelineStage):
                     extraction_results.append({
                         'ra': ra, 'dec': dec, 'label': label,
                         'cutout': None, 'status': 'error', 'error': str(e)
+                    })
+                    # Append a placeholder item with no bands; Preprocessor will
+                    # record a failed/rejected manifest row keyed to index i.
+                    items.append({
+                        'bands': {},
+                        'meta': {
+                            'index': i, 'ra': ra, 'dec': dec, 'label': label,
+                            'reject_reason': str(e),
+                        },
                     })
 
             successful = sum(1 for r in extraction_results if r['status'] == 'success')
@@ -441,24 +456,28 @@ class PreprocessingStage(PipelineStage):
             dec = cutout_data.get('dec', 0.0)
             cutouts = cutout_data.get('cutout', {})
 
-            # Get the data for each band according to mapping
+            # Get the data for each band according to mapping.
+            # Branch order matters: check .array (Butler/exposure-like) first,
+            # then bare np.ndarray (whose .data is a memoryview, not pixel data),
+            # then .data last to avoid a bare ndarray wrongly taking that branch.
             rgb_arrays = {}
             for color, band in mapping.items():
                 if band in cutouts and cutouts[band] is not None:
-                    cutout_data = cutouts[band]
-                    if hasattr(cutout_data, 'array'):  # Butler exposure object
-                        rgb_arrays[color] = cutout_data.array
-                    elif hasattr(cutout_data, 'data'):  # Numpy array with metadata
-                        rgb_arrays[color] = cutout_data.data
-                    else:  # Direct numpy array
-                        rgb_arrays[color] = cutout_data
+                    arr_obj = cutouts[band]
+                    if hasattr(arr_obj, 'array'):  # Butler exposure object
+                        rgb_arrays[color] = arr_obj.array
+                    elif isinstance(arr_obj, np.ndarray):  # bare numpy array
+                        rgb_arrays[color] = arr_obj
+                    elif hasattr(arr_obj, 'data'):  # other array-like with .data
+                        rgb_arrays[color] = arr_obj.data
+                    else:
+                        rgb_arrays[color] = arr_obj
 
             if len(rgb_arrays) < 3:
                 Logger.warning(f"Insufficient bands for RGB composite at RA={ra:.3f}, Dec={dec:.3f}")
                 return None
 
             # Create RGB composite
-            import numpy as np
             rgb_shape = rgb_arrays['R'].shape
             rgb_image = np.zeros((rgb_shape[0], rgb_shape[1], 3), dtype=np.float32)
 

@@ -95,9 +95,15 @@ class Preprocessor:
 
     def run(self, items, out_dir=None):
         rows, chws, accepted = [], [], []
-        for idx, item in enumerate(items):
+        for enum_idx, item in enumerate(items):
+            # Prefer the stable original coordinate position stored in
+            # meta["index"] (set by the stage path) over the enumerate index.
+            # This keeps manifest row["index"] == original coordinate position
+            # even when some items were inserted for failed extractions.
+            meta = item.get("meta") or {}
+            idx = meta.get("index", enum_idx)
             try:
-                res = self.process_band_dict(item.get("bands", {}), item.get("meta"))
+                res = self.process_band_dict(item.get("bands", {}), meta)
                 row = res["row"]
                 row["index"] = idx
                 if res["chw"] is not None:
@@ -109,7 +115,7 @@ class Preprocessor:
                     accepted.append(idx)
                 rows.append(row)
             except Exception as exc:  # record failure, keep going
-                rows.append({**self._base_row(item.get("meta", {})), "index": idx,
+                rows.append({**self._base_row(meta), "index": idx,
                              "status": "failed", "reject_reason": str(exc)})
         if out_dir is not None:
             manifest_mod.write_manifest(rows, os.path.join(str(out_dir), "manifest.csv"))

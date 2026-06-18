@@ -167,3 +167,114 @@ def test_process_rgb_composites_uses_canonical_default_mapping():
 
     # And the default must match CutoutSaver.RGB_BAND_ORDER.
     assert CutoutSaver.RGB_BAND_ORDER == ("i", "r", "g")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for final-review findings
+# ---------------------------------------------------------------------------
+
+def test_manifest_one_row_per_coordinate_with_extraction_failure(monkeypatch):
+    """Finding 1 regression: one manifest row per coordinate, stable index.
+
+    Three coordinates are requested; the middle one fails during extraction.
+    The manifest must have exactly three rows, each row's ``index`` must equal
+    its original coordinate position, and accepted_indices must skip the failed
+    middle coordinate while still referencing the correct original positions.
+    """
+    stage = PreprocessingStage(
+        {
+            "processing": {"steps": ["cutout_creation"], "params": {}},
+            "output": {"save_cutouts": False},
+        }
+    )
+
+    def _selective_create(ra, dec):
+        # Middle coordinate (ra=11.0) fails; others succeed.
+        if ra == 11.0:
+            raise RuntimeError("simulated extraction failure")
+        return _band_dict()
+
+    fake_fetcher = MagicMock()
+    fake_fetcher.get_multi_band_cutout.side_effect = _selective_create
+    monkeypatch.setattr(stage, "_build_data_fetcher", lambda data: fake_fetcher)
+
+    # Patch CutoutCreator.create to delegate to the fake fetcher.
+    from ripple.preprocessing import CutoutCreator
+    monkeypatch.setattr(CutoutCreator, "create",
+                        lambda self, ra, dec: fake_fetcher.get_multi_band_cutout(ra, dec))
+
+    data = {
+        "data_source_config": {"type": "butler_repo"},
+        "coordinates": [
+            {"ra": 10.0, "dec": -30.0, "label": "coord_0"},  # index 0 - success
+            {"ra": 11.0, "dec": -31.0, "label": "coord_1"},  # index 1 - FAILS
+            {"ra": 12.0, "dec": -32.0, "label": "coord_2"},  # index 2 - success
+        ],
+    }
+    out = stage.execute(data)
+
+    assert out is not None
+    manifest = out.get("preprocess_manifest")
+    assert manifest is not None, "preprocess_manifest must be present in output"
+
+    # Exactly one row per coordinate.
+    assert len(manifest) == 3, f"expected 3 manifest rows, got {len(manifest)}"
+
+    # Each row's index must equal its original coordinate position.
+    indices = [row["index"] for row in manifest]
+    assert indices == [0, 1, 2], f"expected indices [0,1,2], got {indices}"
+
+    # The failed middle coordinate must NOT be accepted.
+    accepted = out.get("tensor") is not None or True  # accepted_indices is inside result
+    # Re-derive accepted from manifest (status == 'accepted' rows).
+    accepted_indices = [row["index"] for row in manifest if row.get("status") == "accepted"]
+    assert 1 not in accepted_indices, "failed coordinate (index 1) must not be accepted"
+    assert 0 in accepted_indices, "index 0 must be accepted"
+    assert 2 in accepted_indices, "index 2 must be accepted"
+
+    # The middle row must have a non-accepted status.
+    middle = manifest[1]
+    assert middle["status"] in ("rejected", "failed"), (
+        f"middle row status should be rejected/failed, got {middle['status']!r}"
+    )
+
+
+def test_rgb_composite_bare_ndarray(monkeypatch):
+    """Finding 2 regression: bare np.ndarray must not take the .data branch.
+
+    A bare ndarray has ``ndarray.data`` (a memoryview), so the old branch order
+    would mistakenly assign the memoryview as the pixel data.  With the fix,
+    a bare ndarray is handled by the ``isinstance(arr_obj, np.ndarray)`` branch
+    and the resulting composite must have the correct shape and finite values.
+    """
+    stage = PreprocessingStage(
+        {
+            "processing": {"steps": ["rgb_composite"], "params": {}},
+            "output": {"save_cutouts": False},
+        }
+    )
+
+    ramp = np.arange(16, dtype=np.float32).reshape(4, 4)
+    # Bare ndarrays - no .array attribute, but .data is a memoryview.
+    cutout = {
+        "i": ramp.copy(),
+        "r": (ramp[::-1, ::-1]).copy(),
+        "g": (ramp % 5).copy(),
+    }
+    data = {
+        "extraction_results": [
+            {"ra": 5.0, "dec": -10.0, "label": "bare_arr", "status": "success",
+             "cutout": cutout},
+        ]
+    }
+
+    out = stage._process_rgb_composites(data)
+
+    rgb = out["extraction_results"][0].get("rgb_composite")
+    assert rgb is not None, "RGB composite must be produced for bare ndarrays"
+    assert rgb.shape == (4, 4, 3), f"expected shape (4,4,3), got {rgb.shape}"
+    assert np.all(np.isfinite(rgb)), "RGB composite must contain only finite values"
+    # Values must be clipped to [0, 1] by the percentile stretch.
+    assert rgb.min() >= 0.0 and rgb.max() <= 1.0, (
+        f"RGB composite values out of [0,1] range: min={rgb.min()}, max={rgb.max()}"
+    )
