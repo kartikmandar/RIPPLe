@@ -25,6 +25,12 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Model-weight cache (Phase-3): train-on-demand checkpoints + Torch blobs are
+# never committed (resnet18 ~47MB, vit_b_16 ~346MB exceed the GitHub cap).
+models_cache/
+*.pt
+
 .env
 .venv
 env/
