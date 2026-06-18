@@ -330,6 +330,7 @@ class PreprocessingStage(PipelineStage):
                 'successful_extractions': successful,
                 'tensor': result.tensor,
                 'preprocess_manifest': result.manifest,
+                'accepted_indices': result.accepted_indices,
                 'status': 'completed'
             }
 
