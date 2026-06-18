@@ -20,6 +20,7 @@ Key Components:
 - group_aware_split: Split rows into train/val/test by spatial group key
 - ingest_labels_from_csv: Load label rows from a CSV file
 - ingest_labels_from_dirs: Load label rows from a directory tree
+- ingest_deeplense_dataset: Convert DeepLense class folders into a RIPPLe manifest + cutouts
 - write_manifest / read_manifest / MANIFEST_FIELDS: CSV manifest helpers
 - PreprocessingError, NormalizationError, CutoutError: Custom exceptions
 - CleaningError, PSFMatchError, ManifestError: Additional custom exceptions
@@ -51,6 +52,7 @@ from .dataset import (
     group_aware_split,
     ingest_labels_from_csv,
     ingest_labels_from_dirs,
+    ingest_deeplense_dataset,
 )
 
 # Import manifest helpers
@@ -91,6 +93,7 @@ __all__ = [
     "group_aware_split",
     "ingest_labels_from_csv",
     "ingest_labels_from_dirs",
+    "ingest_deeplense_dataset",
     # manifest
     "write_manifest",
     "read_manifest",

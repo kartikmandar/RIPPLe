@@ -120,3 +120,89 @@ def make_dataloader(dataset, batch_size=32, shuffle=True, num_workers=0, seed=0)
                       worker_init_fn=seed_worker if num_workers > 0 else None,
                       generator=g,
                       persistent_workers=num_workers > 0)
+
+
+def _carve_val_from_train(rows, val_fraction, seed, group_key="group_key"):
+    """Move a group-coherent val_fraction of the train *groups* into split='val'.
+
+    Operates only on rows currently in split=='train'; leaves 'test' untouched so a
+    group never spans train and val (leakage-safe). Mutates and returns ``rows``.
+    """
+    train_groups = sorted({r[group_key] for r in rows if r.get("split") == "train"})
+    if not train_groups or val_fraction <= 0:
+        return rows
+    rng = random.Random(seed)
+    rng.shuffle(train_groups)
+    n_val = int(round(val_fraction * len(train_groups)))
+    n_val = min(max(n_val, 1), len(train_groups) - 1) if len(train_groups) > 1 else 0
+    val_groups = set(train_groups[:n_val])
+    for r in rows:
+        if r.get("split") == "train" and r[group_key] in val_groups:
+            r["split"] = "val"
+    return rows
+
+
+def ingest_deeplense_dataset(src_root, out_dir, *, val_fraction=0.1,
+                             copy_arrays=True, band_order="g,r,i", seed=0):
+    """Convert a DeepLense class-folder dataset into a RIPPLe manifest + cutouts.
+
+    Crawls ``{train,test}_{lenses,nonlenses}/`` of per-object ``.npy`` via
+    ``ingest_labels_from_dirs`` (lens=1, non-lens=0), adds the fields
+    ``RippleCutoutDataset`` requires (contiguous ``index``, ``status='accepted'``,
+    ``channels=3``, ``size_px``, ``split``, leakage-safe ``group_key``), optionally
+    copies each array into ``out_dir/cutouts``, and writes ``out_dir/manifest.csv``.
+
+    Test dirs are pinned to split='test'; val_fraction is carved (group-coherent)
+    out of the train groups. Returns the manifest.csv path.
+    """
+    out_dir = str(out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    cutouts_dir = os.path.join(out_dir, "cutouts")
+    if copy_arrays:
+        os.makedirs(cutouts_dir, exist_ok=True)
+
+    rows = ingest_labels_from_dirs(src_root)
+    if not rows:
+        raise ValueError(f"No .npy class folders found under {src_root!r}")
+
+    out_rows = []
+    for r in rows:
+        src_path = r["path"]
+        stem = os.path.splitext(os.path.basename(src_path))[0]
+        cls_folder = os.path.basename(os.path.dirname(src_path))
+        arr = np.load(src_path)
+        if arr.ndim == 2:
+            arr = np.repeat(arr[None, :, :], 3, axis=0)
+        elif arr.ndim == 3 and arr.shape[0] == 1:
+            arr = np.repeat(arr, 3, axis=0)
+        arr = np.ascontiguousarray(arr, dtype=np.float32)
+        channels, size_px = int(arr.shape[0]), int(arr.shape[-1])
+
+        if copy_arrays:
+            cls_out_dir = os.path.join(cutouts_dir, cls_folder)
+            os.makedirs(cls_out_dir, exist_ok=True)
+            dst_path = os.path.join(cls_out_dir, f"{stem}.npy")
+            np.save(dst_path, arr)
+            path = dst_path
+        else:
+            path = src_path
+
+        out_rows.append({
+            "path": path,
+            "label": r["label"],
+            "split": r["split"],
+            "group_key": stem,
+            "status": "accepted",
+            "channels": channels,
+            "size_px": size_px,
+            "band_order": band_order,
+        })
+
+    _carve_val_from_train(out_rows, val_fraction, seed)
+
+    for i, r in enumerate(out_rows):
+        r["index"] = i
+
+    manifest_path = os.path.join(out_dir, "manifest.csv")
+    manifest_mod.write_manifest(out_rows, manifest_path)
+    return manifest_path
