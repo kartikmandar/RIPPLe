@@ -52,3 +52,29 @@ def test_get_object_catalog_without_tap_raises():
     f.rsp_tap_client = None
     with pytest.raises(DataAccessError):
         f.get_object_catalog(ra=1.0, dec=2.0)
+
+
+def test_get_cutout_dp1_uses_release_aware_dataset_type():
+    """get_cutout must not forward the hardcoded 'deepCoadd' literal to the
+    butler when data_release='dp1'; it should resolve to 'deep_coadd' via
+    the butler_client's release-aware _dt('coadd') before forwarding."""
+    f = LsstDataFetcher({"type": "data_folder", "data_release": "dp1"})
+    mock_butler = MagicMock()
+    mock_butler.test_connection.return_value = True
+    mock_butler._dt.side_effect = lambda logical: "deep_coadd" if logical == "coadd" else logical
+    mock_butler.get_cutout.return_value = "CUTOUT"
+    f.butler_client = mock_butler
+
+    f.get_cutout(ra=55.0, dec=-30.0, size_arcsec=60.0, band="i", backend="butler")
+
+    # Confirm the call was made and dataset_type was 'deep_coadd', not 'deepCoadd'
+    mock_butler.get_cutout.assert_called_once()
+    _, call_kwargs = mock_butler.get_cutout.call_args
+    forwarded_dataset_type = call_kwargs.get("dataset_type")
+    assert forwarded_dataset_type != "deepCoadd", (
+        f"Expected release-aware 'deep_coadd' for dp1, but got '{forwarded_dataset_type}'. "
+        "The hardcoded 'deepCoadd' default is still bypassing the resolver."
+    )
+    assert forwarded_dataset_type == "deep_coadd", (
+        f"Expected 'deep_coadd' for dp1 release, got '{forwarded_dataset_type}'."
+    )

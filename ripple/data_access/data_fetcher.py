@@ -256,7 +256,7 @@ class LsstDataFetcher:
             raise DataAccessError(f"Failed to retrieve deep coadd: {e}")
 
     def get_cutout(self, ra: float, dec: float, size_arcsec: float = 60.0,
-                   band: str = "i", dataset_type: str = "deepCoadd",
+                   band: str = "i", dataset_type: Optional[str] = None,
                    use_bbox: bool = True, backend: str = "auto") -> Optional[Any]:
         """
         Get a cutout from LSST data using coordinate-based efficient retrieval.
@@ -269,7 +269,10 @@ class LsstDataFetcher:
             dec (float): Declination in degrees
             size_arcsec (float): Cutout size in arcseconds
             band (str): Filter band (g, r, i, z, y)
-            dataset_type (str): Type of dataset to retrieve
+            dataset_type (str, optional): Type of dataset to retrieve; when None
+                the release-aware name is resolved via the butler client's
+                ``_dt('coadd')`` (e.g. ``deep_coadd`` for DP1, ``deepCoadd``
+                for DP0.2).
             use_bbox (bool): Whether to use bbox optimization
             backend (str): Backend to use ("butler", "rsp", or "auto")
 
@@ -279,6 +282,15 @@ class LsstDataFetcher:
         Raises:
             DataAccessError: If data retrieval fails
         """
+        # Resolve the dataset type via the release-aware resolver so DP1
+        # (which uses 'deep_coadd') and DP0.2 ('deepCoadd') both work without
+        # the caller needing to know the concrete name.
+        if dataset_type is None:
+            dataset_type = (
+                self.butler_client._dt('coadd')
+                if self.butler_client
+                else 'deep_coadd'
+            )
         self.logger.info(f"Retrieving cutout at ({ra:.4f}, {dec:.4f}), size={size_arcsec}\", band={band}")
 
         # Auto-select backend
