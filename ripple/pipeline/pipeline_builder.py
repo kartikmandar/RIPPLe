@@ -86,11 +86,13 @@ class PipelineBuilder:
 
             stages_list.append(PreprocessingStage(config=full_config_dict))
         
-        # Placeholder for model stage
+        # Model stage: pass the FULL config dict (mirrors PreprocessingStage /
+        # DataSourceStage) so ModelStage.__init__ resolves model.type/operation
+        # from the nested 'model' block instead of re-extracting an already-
+        # extracted sub-dict down to {} (the double-extraction bug).
         if hasattr(self.config, "model"):
             logger.debug("Found 'model' attribute in config. Creating ModelStage.")
-            model_config = getattr(self.config, "model", {})
-            stages_list.append(ModelStage(config=model_config))
+            stages_list.append(ModelStage(config=full_config_dict))
             
         if not stages_list:
             logger.warning("No stage attributes ('ingestion', 'data_source', 'processing', 'model') found in configuration. Returning empty list.")
