@@ -20,6 +20,13 @@ dependencies = []
 [project.optional-dependencies]
 # Non-stack pip extras (lsst.rsp is not bundled in lsst_distrib).
 rsp = ["lsst-rsp", "python-dotenv"]
+# Dataset acquisition extra: gdown pulls DeepLense GSoC corpora from Google Drive.
+# Imported lazily inside ripple.data.fetch so the base install stays gdown-free.
+data = ["gdown>=5"]
+
+[project.scripts]
+ripple-fetch-data = "ripple.data.fetch:main"
+ripple-ingest-deeplense = "ripple.data.ingest_deeplense:main"
 
 [tool.setuptools.packages.find]
 include = ["ripple*"]
