@@ -224,3 +224,30 @@ def test_evaluator_multiclass_single_class_no_crash():
     metrics = ev.evaluate(_StubMulticlassModel(), loader)
     assert "auc" in metrics
     assert np.isnan(metrics["auc"])
+
+
+# ---------------------------------------------------------------------------
+# Threshold helpers (Task 15)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.torch
+def test_evaluator_roc_curve_points():
+    pytest.importorskip("torch")
+    from ripple.models.model_evaluator import ModelEvaluator
+    loader = _make_binary_loader()
+    ev = ModelEvaluator("binary")
+    pts = ev.roc_curve_points(_StubBinaryModel(), loader)
+    for key in ("fpr", "tpr", "thresholds"):
+        assert key in pts
+    assert len(pts["fpr"]) == len(pts["tpr"])
+
+
+@pytest.mark.torch
+def test_evaluator_best_threshold_returns_float():
+    pytest.importorskip("torch")
+    from ripple.models.model_evaluator import ModelEvaluator
+    loader = _make_binary_loader()
+    ev = ModelEvaluator("binary")
+    thr = ev.best_threshold(_StubBinaryModel(), loader, criterion="youden")
+    assert isinstance(thr, float)
+    assert 0.0 <= thr <= 1.0

@@ -115,6 +115,38 @@ class ModelEvaluator:
             "threshold": float(threshold),
         }
 
+    def roc_curve_points(self, model, loader):
+        """Return ROC curve points ``{fpr, tpr, thresholds}`` (binary task)."""
+        from sklearn.metrics import roc_curve
+
+        y_true, y_score = self.predict_proba(model, loader)
+        fpr, tpr, thresholds = roc_curve(y_true, y_score)
+        return {
+            "fpr": [float(v) for v in fpr],
+            "tpr": [float(v) for v in tpr],
+            "thresholds": [float(v) for v in thresholds],
+        }
+
+    def best_threshold(self, model, loader, *, criterion="youden"):
+        """Return the decision threshold maximizing the given criterion.
+
+        ``criterion="youden"`` maximizes ``tpr - fpr``.
+        """
+        import numpy as np
+        from sklearn.metrics import roc_curve
+
+        y_true, y_score = self.predict_proba(model, loader)
+        fpr, tpr, thresholds = roc_curve(y_true, y_score)
+        if criterion != "youden":
+            raise ValueError(f"unknown criterion: {criterion!r}")
+        j = tpr - fpr
+        best_idx = int(np.argmax(j))
+        thr = float(thresholds[best_idx])
+        # roc_curve prepends an infinite threshold sentinel; clamp to [0, 1].
+        if not np.isfinite(thr):
+            thr = 1.0
+        return float(min(1.0, max(0.0, thr)))
+
     def _evaluate_multiclass(self, y_true, y_score, threshold):
         import numpy as np
         from sklearn.metrics import (
