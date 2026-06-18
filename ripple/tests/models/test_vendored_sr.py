@@ -167,3 +167,51 @@ def test_adapter_load_weights_wrong_shape_raises_model_load_error(tmp_path):
     adapter = VendoredSRAdapter(cfg)  # builds a SISR
     with pytest.raises(ModelLoadError):
         adapter.load_weights(str(ckpt))
+
+
+# ---------------------------------------------------------------------------
+# Task 20: Real-weight integration tests (gated on submodule weights present)
+# ---------------------------------------------------------------------------
+
+import os
+
+_REPO = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..",
+    "DeepLense", "DeepLense_Physics_Informed_Super_Resolution_Anirudh_Shankar",
+)
+_SISR_W = os.path.abspath(os.path.join(_REPO, "vanilla", "Weights_1.pt"))
+_RCAN_W = os.path.abspath(os.path.join(_REPO, "RCAN", "Weights_1.pt"))
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.path.exists(_SISR_W),
+                    reason="vanilla/Weights_1.pt not present")
+def test_real_sisr_weights_strict_load_and_forward():
+    torch = pytest.importorskip("torch")
+    from ripple.models.config import ModelConfig
+    from ripple.models.vendored_sr_adapter import VendoredSRAdapter
+
+    cfg = ModelConfig(model_type="anirudh_sr", task="super_res",
+                      in_channels=1, device="cpu")
+    adapter = VendoredSRAdapter(cfg)
+    adapter.load_weights(_SISR_W)  # strict; raises ModelLoadError on mismatch
+    result = adapter.predict(torch.rand(2, 3, 64, 64), return_image=True)
+    assert tuple(result["alpha"].shape) == (2, 2, 128, 128)
+    assert tuple(result["output_image"].shape) == (2, 1, 128, 128)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.path.exists(_RCAN_W),
+                    reason="RCAN/Weights_1.pt not present")
+def test_real_rcan_weights_strict_load_and_forward():
+    torch = pytest.importorskip("torch")
+    from ripple.models.config import ModelConfig
+    from ripple.models.vendored_sr_adapter import VendoredSRAdapter
+
+    cfg = ModelConfig(model_type="anirudh_sr_rcan", task="super_res",
+                      in_channels=1, device="cpu")
+    adapter = VendoredSRAdapter(cfg)
+    adapter.load_weights(_RCAN_W)  # strict; RCAN(latent=128,num_rg=2,num_rcab=2,reduction=2,out=2)
+    result = adapter.predict(torch.rand(2, 3, 64, 64), return_image=False)
+    assert tuple(result["alpha"].shape) == (2, 2, 128, 128)
+    assert result["scale"] == 2
