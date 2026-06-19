@@ -251,3 +251,63 @@ def test_evaluator_best_threshold_returns_float():
     thr = ev.best_threshold(_StubBinaryModel(), loader, criterion="youden")
     assert isinstance(thr, float)
     assert 0.0 <= thr <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Non-CPU device test (MPS / CUDA) — skips on CPU-only machines
+# ---------------------------------------------------------------------------
+
+class _TorchBinaryModel:
+    """Tiny nn.Module-backed binary model so parameters live on a real device."""
+
+    def __init__(self, device):
+        torch = pytest.importorskip("torch")
+        import torch.nn as nn
+
+        class _Net(nn.Module):
+            def forward(self, x):
+                # Channel mean -> single logit per sample
+                return x.mean(dim=(1, 2, 3), keepdim=True)
+
+        self._net = _Net().to(device)
+
+    def eval(self):
+        self._net.eval()
+        return self
+
+    def predict_logits(self, x):
+        return self._net(x)
+
+
+@pytest.mark.torch
+def test_evaluator_non_cpu_device_no_error():
+    """Evaluation must succeed when the model is on MPS or CUDA.
+
+    Skips cleanly on CPU-only machines.
+    """
+    torch = pytest.importorskip("torch")
+    from torch.utils.data import TensorDataset, DataLoader
+    from ripple.models.model_evaluator import ModelEvaluator
+
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        pytest.skip("no non-CPU accelerator available")
+
+    # Build a tiny CPU DataLoader (loader yields CPU tensors, model is on device)
+    g = torch.Generator().manual_seed(7)
+    half = 8
+    x_neg = torch.randn(half, 3, 8, 8, generator=g) - 1.0
+    x_pos = torch.randn(half, 3, 8, 8, generator=g) + 1.0
+    x = torch.cat([x_neg, x_pos], dim=0)
+    y = torch.cat([torch.zeros(half), torch.ones(half)]).long()
+    loader = DataLoader(TensorDataset(x, y), batch_size=4, shuffle=False)
+
+    model = _TorchBinaryModel(device)
+    ev = ModelEvaluator("binary")
+    # Must not raise a device-mismatch error
+    metrics = ev.evaluate(model, loader)
+    assert "auc" in metrics
+    assert 0.0 <= metrics["auc"] <= 1.0

@@ -7,6 +7,24 @@ cheap and torch-free.
 """
 
 
+def _model_device(model):
+    """Return the device the model's parameters live on.
+
+    Works with RIPPLe ``BaseModel`` instances (which wrap an ``nn.Module`` in
+    ``model._net``) as well as raw ``nn.Module`` objects.  Falls back to CPU
+    if the model has no parameters or ``_net`` is not yet built.
+    """
+    import torch
+
+    net = getattr(model, "_net", model)
+    if net is None:
+        return torch.device("cpu")
+    try:
+        return next(net.parameters()).device
+    except (StopIteration, AttributeError):
+        return torch.device("cpu")
+
+
 class ModelEvaluator:
     """Compute classification metrics for a model over a dataloader.
 
@@ -25,21 +43,37 @@ class ModelEvaluator:
             self.task = getattr(config, "task", "binary")
 
     def _iter_logits(self, model, loader):
-        """Yield (logits_np, y_np) per batch over a no-grad eval pass."""
+        """Yield (logits_np, y_np) per batch over a no-grad eval pass.
+
+        Each input batch is moved to the model's device before the forward
+        pass, and the resulting logits are moved back to CPU before being
+        converted to numpy.  This makes evaluation work correctly on MPS and
+        CUDA without any change to callers.
+        """
         import numpy as np
         import torch
 
         if hasattr(model, "eval"):
             model.eval()
+
+        # Resolve the device lazily on the first batch so that any lazy
+        # ``_build`` triggered by ``predict_logits`` has already run.
+        dev = None
         with torch.no_grad():
             for batch in loader:
                 x, y = batch[0], batch[1]
                 if hasattr(model, "predict_logits"):
-                    logits = model.predict_logits(x)
+                    if dev is None:
+                        dev = _model_device(model)
+                    logits = model.predict_logits(x.to(dev))
                 elif hasattr(model, "forward_logits"):
-                    logits = model.forward_logits(x)
+                    if dev is None:
+                        dev = _model_device(model)
+                    logits = model.forward_logits(x.to(dev))
                 else:
-                    logits = model(x)
+                    if dev is None:
+                        dev = _model_device(model)
+                    logits = model(x.to(dev))
                 yield (
                     logits.detach().cpu().numpy(),
                     y.detach().cpu().numpy().astype(np.int64),
