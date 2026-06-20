@@ -198,7 +198,8 @@ class MaskedViTEncoder(Encoder):
             dim_feedforward=int(hidden_dim * mlp_ratio),
             activation="gelu", batch_first=True, norm_first=True,
         )
-        self.blocks = nn.TransformerEncoder(layer, num_layers=depth)
+        self.blocks = nn.TransformerEncoder(layer, num_layers=depth,
+                                            enable_nested_tensor=False)
         self.norm = nn.LayerNorm(hidden_dim)
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
         nn.init.trunc_normal_(self.cls_token, std=0.02)
@@ -208,6 +209,8 @@ class MaskedViTEncoder(Encoder):
         return x.flatten(2).transpose(1, 2)     # (N, num_patches, hidden)
 
     def _encode_all(self, x: torch.Tensor) -> torch.Tensor:
+        # Full-sequence forward (cls + all patches); the MAE model instead
+        # reuses ``_embed``/``blocks``/``norm`` directly on visible tokens only.
         x = self._embed(x) + self.pos_embed[:, 1:, :]
         cls = (self.cls_token + self.pos_embed[:, :1, :]).expand(x.shape[0], -1, -1)
         x = torch.cat([cls, x], dim=1)

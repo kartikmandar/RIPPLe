@@ -27,3 +27,10 @@ def test_forward_tokens_returns_patch_grid():
     e = _enc().eval()
     out = e.forward_tokens(torch.randn(2, 3, 64, 64))
     assert out.shape == (2, 256, 192)
+
+
+def test_load_bearing_attrs():
+    # Task 4's MAE model reuses these exact names for visible-token encoding.
+    e = _enc()
+    for attr in ("_embed", "cls_token", "pos_embed", "patch_embed", "blocks", "norm"):
+        assert hasattr(e, attr), f"missing load-bearing attribute: {attr}"
