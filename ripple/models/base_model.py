@@ -195,6 +195,34 @@ class BaseModel(ModelInterface):
                 "failed to load weights from {!r}: {}".format(path, exc)
             ) from exc
 
+    def load_encoder_weights(self, path):
+        from ripple.models.exceptions import ModelLoadError
+
+        self._build()
+        try:
+            from ripple.models.ssl.checkpoint import load_encoder_state
+            ckpt = load_encoder_state(path)
+            sd = ckpt["encoder_state_dict"] if isinstance(ckpt, dict) and \
+                "encoder_state_dict" in ckpt else ckpt
+            if isinstance(ckpt, dict) and "state_dict" in ckpt and \
+                    "encoder_state_dict" not in ckpt:
+                sd = ckpt["state_dict"]
+            result = self._net.encoder.load_state_dict(sd, strict=False)
+            missing = [k for k in result.missing_keys
+                       if not k.endswith("num_batches_tracked")]
+            unexpected = [k for k in result.unexpected_keys
+                          if not k.endswith("num_batches_tracked")]
+            if missing or unexpected:
+                raise ModelLoadError(
+                    "encoder weight mismatch loading {!r}: missing={}, unexpected={}"
+                    .format(path, missing, unexpected))
+        except ModelLoadError:
+            raise
+        except Exception as exc:
+            raise ModelLoadError(
+                "failed to load encoder weights from {!r}: {}".format(path, exc)
+            ) from exc
+
     def to(self, device):
         self._build()
         self._net.to(device)
