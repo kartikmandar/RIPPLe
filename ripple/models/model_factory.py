@@ -63,6 +63,9 @@ class ModelFactory:
         if config.weights_path:
             obj.load_weights(config.weights_path)
 
+        if getattr(config, "encoder_weights_path", None):
+            obj.load_encoder_weights(config.encoder_weights_path)
+
         return obj
 
     @classmethod
