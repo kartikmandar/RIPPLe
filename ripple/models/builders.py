@@ -91,6 +91,35 @@ def build_vit_multiclass(config: ModelConfig) -> BaseModel:
     return BaseModel(config)
 
 
+@register("mae_vit_binary")
+def build_mae_vit_binary(config: ModelConfig) -> BaseModel:
+    """Binary classifier on the MAE ViT-Tiny encoder (one output logit)."""
+    config = _with(
+        config,
+        model_type="mae_vit_binary",
+        task="binary",
+        encoder="mae_vit_tiny",
+        num_classes=2,
+        class_names=("non_lens", "lens"),
+    )
+    return BaseModel(config)
+
+
+@register("mae_vit_multiclass")
+def build_mae_vit_multiclass(config: ModelConfig) -> BaseModel:
+    """3-class substructure classifier on the MAE ViT-Tiny encoder."""
+    config = _with(
+        config,
+        model_type="mae_vit_multiclass",
+        task="multiclass",
+        encoder="mae_vit_tiny",
+        num_classes=config.num_classes if config.num_classes >= 2 else 3,
+        class_names=config.class_names if len(config.class_names) >= 2
+        else ("no_sub", "cdm", "axion"),
+    )
+    return BaseModel(config)
+
+
 # Side-effect import: registers anirudh_sr / anirudh_sr_rcan when the SR
 # adapter (Task 21) is present. Wrapped defensively so the four classifier
 # builders above always register even if the adapter is not yet implemented.
