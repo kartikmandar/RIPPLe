@@ -150,3 +150,30 @@ class TrainerConfig:
     def resolve_device(self) -> str:
         """Resolve ``device`` to a concrete torch device string (torch lazy)."""
         return _resolve_device(self.device)
+
+
+@dataclass(frozen=True)
+class MAEConfig:
+    """Immutable MAE pretraining settings (mirrors TrainerConfig)."""
+    patch_size: int = 4
+    mask_ratio: float = 0.75
+    decoder_dim: int = 128
+    decoder_depth: int = 2
+    norm_pix_loss: bool = True
+    epochs: int = 100
+    batch_size: int = 64
+    lr: float = 1e-4
+    weight_decay: float = 0.0
+    optimizer: str = "adamw"
+    seed: int = 0
+    device: Optional[str] = None
+    num_workers: int = 0
+    log_every: int = 0
+    grad_clip_norm: Optional[float] = None
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict]) -> "MAEConfig":
+        if not d:
+            return cls()
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in names})
