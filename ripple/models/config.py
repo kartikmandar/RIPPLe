@@ -11,7 +11,7 @@ from typing import Optional, Tuple
 from ripple.models.exceptions import ModelConfigError
 
 _TASKS = {"binary", "multiclass", "super_res"}
-_ENCODERS = {"resnet18", "resnet34", "vit_b_16", "vit_small"}
+_ENCODERS = {"resnet18", "resnet34", "vit_b_16", "vit_small", "mae_vit_tiny"}
 _OPTIMIZERS = {"adamw", "adam", "sgd"}
 _IMBALANCE = {"pos_weight", "weighted_sampler", "none"}
 
@@ -38,7 +38,7 @@ class ModelConfig:
     Attributes:
         model_type: Registry key, e.g. ``'resnet_binary'``.
         task: ``'binary'`` (one logit + sigmoid) | ``'multiclass'`` | ``'super_res'``.
-        encoder: Backbone, one of ``{resnet18, resnet34, vit_b_16, vit_small}``.
+        encoder: Backbone, one of ``{resnet18, resnet34, vit_b_16, vit_small, mae_vit_tiny}``.
         in_channels: Input channel count (3 for g,r,i).
         num_classes: Class count for multiclass; binary still emits one logit.
         input_size: Square input side length in pixels.
@@ -49,6 +49,8 @@ class ModelConfig:
         pretrained: Use ImageNet-pretrained backbone weights.
         apply_imagenet_norm: Apply ImageNet RGB normalization (default off).
         vit_variant: ``'b16_finetune'`` | ``'small_scratch'``.
+        encoder_weights_path: Optional path to encoder-specific weights.
+        patch_size: Patch size for vision transformers (default 4).
     """
     model_type: str = "resnet_binary"
     task: str = "binary"
@@ -63,6 +65,8 @@ class ModelConfig:
     pretrained: bool = False
     apply_imagenet_norm: bool = False
     vit_variant: str = "b16_finetune"
+    encoder_weights_path: Optional[str] = None
+    patch_size: int = 4
 
     def __post_init__(self):
         if self.task not in _TASKS:
