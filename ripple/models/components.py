@@ -167,6 +167,60 @@ class ViTEncoder(Encoder):
 
 
 # ---------------------------------------------------------------------------
+# MaskedViTEncoder
+# ---------------------------------------------------------------------------
+
+class MaskedViTEncoder(Encoder):
+    """Pure-torch ViT-Tiny usable as a RIPPLe encoder AND an MAE backbone.
+
+    ``forward`` runs all tokens and returns the cls vector (classification);
+    ``forward_tokens`` returns the patch-token grid (super-resolution); the
+    MAE model reuses ``_embed``/``cls_token``/``pos_embed``/``blocks``/``norm``
+    directly for visible-token-only encoding.
+    """
+
+    def __init__(self, hidden_dim: int = 192, depth: int = 6, num_heads: int = 3,
+                 patch_size: int = 4, in_channels: int = 3, input_size: int = 64,
+                 mlp_ratio: float = 4.0):
+        super().__init__()
+        self.feature_dim = hidden_dim
+        self.patch_size = patch_size
+        self.in_channels = in_channels
+        self.input_size = input_size
+        self.grid = input_size // patch_size
+        self.num_patches = self.grid * self.grid
+        self.patch_embed = nn.Conv2d(in_channels, hidden_dim,
+                                     kernel_size=patch_size, stride=patch_size)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, hidden_dim))
+        layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim, nhead=num_heads,
+            dim_feedforward=int(hidden_dim * mlp_ratio),
+            activation="gelu", batch_first=True, norm_first=True,
+        )
+        self.blocks = nn.TransformerEncoder(layer, num_layers=depth)
+        self.norm = nn.LayerNorm(hidden_dim)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+    def _embed(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.patch_embed(x)                 # (N, hidden, grid, grid)
+        return x.flatten(2).transpose(1, 2)     # (N, num_patches, hidden)
+
+    def _encode_all(self, x: torch.Tensor) -> torch.Tensor:
+        x = self._embed(x) + self.pos_embed[:, 1:, :]
+        cls = (self.cls_token + self.pos_embed[:, :1, :]).expand(x.shape[0], -1, -1)
+        x = torch.cat([cls, x], dim=1)
+        return self.norm(self.blocks(x))        # (N, num_patches+1, hidden)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._encode_all(x)[:, 0]        # (N, hidden) cls token
+
+    def forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        return self._encode_all(x)[:, 1:, :]    # (N, num_patches, hidden)
+
+
+# ---------------------------------------------------------------------------
 # build_net
 # ---------------------------------------------------------------------------
 
