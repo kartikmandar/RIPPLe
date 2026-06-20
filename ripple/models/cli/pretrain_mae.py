@@ -30,10 +30,15 @@ def main(argv=None):
 
     ds = RippleCutoutDataset(args.manifest, split="train")
     loader = make_dataloader(ds, batch_size=args.batch_size, shuffle=True)
-    mae = MAE(MaskedViTEncoder(patch_size=args.patch_size))
     cfg = MAEConfig(epochs=args.epochs, mask_ratio=args.mask_ratio,
                     patch_size=args.patch_size, batch_size=args.batch_size,
                     lr=args.lr, device=args.device)
+    mae = MAE(
+        MaskedViTEncoder(patch_size=args.patch_size),
+        decoder_dim=cfg.decoder_dim,
+        decoder_depth=cfg.decoder_depth,
+        norm_pix_loss=cfg.norm_pix_loss,
+    )
     trainer = MAETrainer(cfg)
     history = trainer.fit(mae, loader)
     trainer.save_encoder_checkpoint(args.out, mae, epoch=args.epochs)

@@ -28,8 +28,14 @@ def main():
     x = torch.from_numpy(cutouts)
     loader = DataLoader(TensorDataset(x, torch.full((16,), -1)), batch_size=8)
 
-    mae = MAE(MaskedViTEncoder())
-    trainer = MAETrainer(MAEConfig(epochs=2, device="cpu"))
+    cfg = MAEConfig(epochs=2, device="cpu")
+    mae = MAE(
+        MaskedViTEncoder(),
+        decoder_dim=cfg.decoder_dim,
+        decoder_depth=cfg.decoder_depth,
+        norm_pix_loss=cfg.norm_pix_loss,
+    )
+    trainer = MAETrainer(cfg)
     hist = trainer.fit(mae, loader)
     print("MAE pretrain loss:", hist[-1]["train_loss"])
 
