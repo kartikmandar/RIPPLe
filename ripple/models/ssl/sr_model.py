@@ -35,8 +35,22 @@ class MAEViTSR(BaseModel):
 
         self._net = _EncoderSRNet(enc, head)
 
-    def predict(self, data, *, batch_size=32, device=None):
+    def predict(self, data, *, batch_size=32, device=None, **kwargs):
+        """Run super-resolution; accepts a tensor or dict with key 'tensor'.
+
+        Accepts ``**kwargs`` so callers (e.g. ModelStage._run_super_resolution)
+        may pass ``return_image=True`` without raising TypeError.  Dict input
+        mirrors the VendoredSRAdapter contract used by the pipeline stage.
+
+        :param data: (N,C,H,W) tensor, (C,H,W) tensor, or dict with 'tensor'.
+        :returns: {"output_image": (N,C,H,W) tensor on CPU, "scale": 4}
+        """
         import torch
+
+        if isinstance(data, dict):
+            data = data.get("tensor")
+            if data is None:
+                raise ValueError("MAEViTSR.predict: dict input missing 'tensor' key")
 
         self._build()
         if not torch.is_tensor(data):
