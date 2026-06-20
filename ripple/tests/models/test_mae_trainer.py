@@ -18,7 +18,7 @@ def _mae():
     return MAE(MaskedViTEncoder())
 
 
-def test_fit_returns_history_and_decreases(monkeypatch):
+def test_fit_returns_history_and_decreases():
     from ripple.models.config import MAEConfig
     from ripple.models.ssl.mae_trainer import MAETrainer
     torch.manual_seed(0)
