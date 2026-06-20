@@ -120,6 +120,19 @@ def build_mae_vit_multiclass(config: ModelConfig) -> BaseModel:
     return BaseModel(config)
 
 
+@register("mae_vit_sr")
+def build_mae_vit_sr(config: ModelConfig):
+    """Super-resolution head on the MAE ViT-Tiny encoder (image-out)."""
+    from .ssl.sr_model import MAEViTSR
+    config = _with(
+        config,
+        model_type="mae_vit_sr",
+        task="super_res",
+        encoder="mae_vit_tiny",
+    )
+    return MAEViTSR(config)
+
+
 # Side-effect import: registers anirudh_sr / anirudh_sr_rcan when the SR
 # adapter (Task 21) is present. Wrapped defensively so the four classifier
 # builders above always register even if the adapter is not yet implemented.
