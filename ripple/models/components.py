@@ -259,6 +259,12 @@ def build_net(config) -> EncoderHeadNet:
             in_channels=config.in_channels,
             input_size=config.input_size,
         )
+    elif encoder_name == "mae_vit_tiny":
+        encoder = MaskedViTEncoder(
+            patch_size=config.patch_size,
+            in_channels=config.in_channels,
+            input_size=config.input_size,
+        )
     else:
         raise ValueError(f"unknown encoder {encoder_name!r}")
 
