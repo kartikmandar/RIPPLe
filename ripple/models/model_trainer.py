@@ -89,14 +89,15 @@ class ModelTrainer:
 
     def _make_optimizer(self, net):
         import torch
+        params = [p for p in net.parameters() if p.requires_grad]
         if self.config.optimizer == "adamw":
-            return torch.optim.AdamW(net.parameters(), lr=self.config.lr,
+            return torch.optim.AdamW(params, lr=self.config.lr,
                                      weight_decay=self.config.weight_decay)
         if self.config.optimizer == "adam":
-            return torch.optim.Adam(net.parameters(), lr=self.config.lr,
+            return torch.optim.Adam(params, lr=self.config.lr,
                                     weight_decay=self.config.weight_decay)
         if self.config.optimizer == "sgd":
-            return torch.optim.SGD(net.parameters(), lr=self.config.lr,
+            return torch.optim.SGD(params, lr=self.config.lr,
                                    weight_decay=self.config.weight_decay)
         raise ValueError(f"unknown optimizer: {self.config.optimizer}")
 
